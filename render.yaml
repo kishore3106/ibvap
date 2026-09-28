@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ibvap-backend
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: MODE
+        value: demo
+      - key: CAMERA_SOURCE
+        value: data/demo_videos/sample_border.mp4
+      - key: DEBUG
+        value: "false"
