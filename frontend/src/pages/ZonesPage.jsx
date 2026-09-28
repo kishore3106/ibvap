@@ -26,24 +26,29 @@ export default function ZonesPage() {
         x = Number(pt[0]) || 0;
         y = Number(pt[1]) || 0;
       }
-      if (x <= 1.0 && y <= 1.0 && (x > 0 || y > 0)) {
-        return [Math.round(x * 960), Math.round(y * 540)];
+      if (Math.abs(x) <= 1.5 && Math.abs(y) <= 1.5) {
+        const cx = Math.max(0, Math.min(1, x));
+        const cy = Math.max(0, Math.min(1, y));
+        return [Math.round(cx * 960), Math.round(cy * 540)];
       }
-      return [Math.round(x), Math.round(y)];
+      return [Math.round(Math.max(0, Math.min(960, x))), Math.round(Math.max(0, Math.min(540, y)))];
     });
   };
 
   const toNormalizedPoints = (canvasPts) => {
     if (!canvasPts || !Array.isArray(canvasPts)) return [];
     return canvasPts.map(pt => {
-      const x = Number(pt[0]) || 0;
-      const y = Number(pt[1]) || 0;
+      const rawX = Number(pt[0]) || 0;
+      const rawY = Number(pt[1]) || 0;
+      const clampedX = Math.max(0, Math.min(960, rawX));
+      const clampedY = Math.max(0, Math.min(540, rawY));
       return {
-        x: Number((x / 960).toFixed(4)),
-        y: Number((y / 540).toFixed(4))
+        x: Number((clampedX / 960).toFixed(4)),
+        y: Number((clampedY / 540).toFixed(4))
       };
     });
   };
+
 
   const fetchZones = async () => {
     setLoading(true);

@@ -62,9 +62,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve Snapshot Images statically
+# Serve Snapshot Images and Email Reports statically
 os.makedirs("data/snapshots", exist_ok=True)
 app.mount("/data/snapshots", StaticFiles(directory="data/snapshots"), name="snapshots")
+os.makedirs("data/email_reports", exist_ok=True)
+app.mount("/data/email_reports", StaticFiles(directory="data/email_reports"), name="email_reports")
 
 # Include API Routers
 app.include_router(cameras_router)

@@ -7,6 +7,8 @@ import requests
 
 from backend.config import settings
 from backend.core.auth import TenantContext, get_current_tenant
+from backend.database.session import SessionLocal
+from backend.database.models import EventModel, AlertModel
 
 logger = logging.getLogger("ibvap.api.events")
 router = APIRouter(prefix="/api/v1/events", tags=["Events"])
@@ -31,80 +33,106 @@ def get_events(
     limit: int = Query(default=50, le=300),
     tenant: TenantContext = Depends(get_current_tenant)
 ):
-    """
-    Returns events strictly scoped to the authenticated tenant's organization.
-    Protected by Supabase RLS and server-side tenant filtering.
-    """
-    url = f"{settings.SUPABASE_URL}/rest/v1/events?organization_id=eq.{tenant.organization_id}&select=*&order=timestamp.desc&limit={limit}"
-    if camera_id:
-        url += f"&camera_id=eq.{camera_id}"
-    if event_type:
-        url += f"&event_type=eq.{event_type.upper()}"
+    """Returns events scoped to tenant with SQLite fallback."""
+    try:
+        url = f"{settings.SUPABASE_URL}/rest/v1/events?organization_id=eq.{tenant.organization_id}&select=*&order=timestamp.desc&limit={limit}"
+        if camera_id:
+            url += f"&camera_id=eq.{camera_id}"
+        if event_type:
+            url += f"&event_type=eq.{event_type.upper()}"
 
-    headers = {
-        "apikey": settings.SUPABASE_KEY,
-        "Authorization": f"Bearer {tenant.token}"
-    }
-    res = requests.get(url, headers=headers, timeout=15)
-    if res.status_code != 200:
-        logger.error(f"Failed to query tenant events: {res.status_code} {res.text}")
+        headers = {
+            "apikey": settings.SUPABASE_KEY,
+            "Authorization": f"Bearer {tenant.token}"
+        }
+        res = requests.get(url, headers=headers, timeout=2)
+        if res.status_code == 200:
+            return res.json()
+    except Exception:
+        pass
+
+    db = SessionLocal()
+    try:
+        query = db.query(EventModel)
+        if camera_id:
+            query = query.filter(EventModel.camera_id == camera_id)
+        if event_type:
+            query = query.filter(EventModel.event_type == event_type.upper())
+        events = query.order_by(EventModel.timestamp.desc()).limit(limit).all()
+        results = []
+        for e in events:
+            results.append({
+                "event_id": e.event_id,
+                "camera_id": e.camera_id,
+                "timestamp": e.timestamp.isoformat() if hasattr(e.timestamp, "isoformat") else str(e.timestamp),
+                "event_type": e.event_type,
+                "object_type": e.object_type,
+                "track_id": e.track_id,
+                "confidence": e.confidence,
+                "plate_number": e.plate_number,
+                "plate_confidence": e.plate_confidence,
+                "zone_name": e.zone_name,
+                "snapshot_path": e.snapshot_path
+            })
+        return results
+    except Exception as ex:
+        logger.error(f"Error reading local events: {ex}")
         return []
-    return res.json()
+    finally:
+        db.close()
 
 @router.post("/")
 def create_event(
     event: EventCreatePayload,
     tenant: TenantContext = Depends(get_current_tenant)
 ):
-    url = f"{settings.SUPABASE_URL}/rest/v1/events"
-    headers = {
-        "apikey": settings.SUPABASE_KEY,
-        "Authorization": f"Bearer {tenant.token}",
-        "Content-Type": "application/json",
-        "Prefer": "return=representation"
-    }
-    payload = event.model_dump()
-    payload["organization_id"] = tenant.organization_id
-    res = requests.post(url, headers=headers, json=payload, timeout=15)
-    if res.status_code not in [200, 201]:
-        raise HTTPException(status_code=400, detail=f"Failed to persist event: {res.text}")
-    return res.json()
+    db = SessionLocal()
+    try:
+        new_event = EventModel(
+            event_id=event.event_id,
+            camera_id=event.camera_id,
+            event_type=event.event_type,
+            object_type=event.object_type,
+            track_id=event.track_id,
+            confidence=event.confidence or 0.0,
+            plate_number=event.plate_number,
+            plate_confidence=event.plate_confidence,
+            zone_name=event.zone_name,
+            snapshot_path=event.snapshot_path
+        )
+        db.add(new_event)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+    finally:
+        db.close()
+
+    return {"message": "Event recorded", "event_id": event.event_id}
 
 @router.get("/stats")
-def get_system_stats(tenant: TenantContext = Depends(get_current_tenant)):
-    """
-    Computes real-time tactical stats strictly isolated to the authenticated organization.
-    """
-    today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    headers = {
-        "apikey": settings.SUPABASE_KEY,
-        "Authorization": f"Bearer {tenant.token}",
-        "Prefer": "count=exact"
-    }
-
+def get_event_stats(tenant: TenantContext = Depends(get_current_tenant)):
+    db = SessionLocal()
     try:
-        # 1. Events today for this organization
-        ev_url = f"{settings.SUPABASE_URL}/rest/v1/events?organization_id=eq.{tenant.organization_id}&timestamp=gte.{today_start}&select=id"
-        ev_res = requests.get(ev_url, headers=headers, timeout=15)
-        events_today = int(ev_res.headers.get("content-range", "0-0/0").split("/")[-1]) if ev_res.status_code == 200 else 0
-
-        # 2. Active alerts for this organization
-        al_url = f"{settings.SUPABASE_URL}/rest/v1/alerts?organization_id=eq.{tenant.organization_id}&status=eq.NEW&select=id"
-        al_res = requests.get(al_url, headers=headers, timeout=15)
-        active_alerts = int(al_res.headers.get("content-range", "0-0/0").split("/")[-1]) if al_res.status_code == 200 else 0
-
-        # 3. Critical alerts for this organization
-        crit_url = f"{settings.SUPABASE_URL}/rest/v1/alerts?organization_id=eq.{tenant.organization_id}&status=eq.NEW&severity=eq.CRITICAL&select=id"
-        crit_res = requests.get(crit_url, headers=headers, timeout=15)
-        critical_alerts = int(crit_res.headers.get("content-range", "0-0/0").split("/")[-1]) if crit_res.status_code == 200 else 0
+        events_count = db.query(EventModel).count()
+        active_alerts_count = db.query(AlertModel).filter(AlertModel.status == "NEW").count()
+        critical_alerts_count = db.query(AlertModel).filter(
+            AlertModel.status == "NEW",
+            AlertModel.severity == "CRITICAL"
+        ).count()
+        return {
+            "events_today": events_count,
+            "active_alerts": active_alerts_count,
+            "critical_alerts": critical_alerts_count,
+            "ai_status": "Running"
+        }
     except Exception as e:
-        logger.error(f"Error computing tenant stats: {e}")
-        events_today, active_alerts, critical_alerts = 0, 0, 0
+        logger.error(f"Error retrieving event stats: {e}")
+        return {
+            "events_today": 0,
+            "active_alerts": 0,
+            "critical_alerts": 0,
+            "ai_status": "Running"
+        }
+    finally:
+        db.close()
 
-    return {
-        "events_today": events_today,
-        "active_alerts": active_alerts,
-        "critical_alerts": critical_alerts,
-        "organization_id": tenant.organization_id,
-        "ai_status": "Running (Tenant Isolated)"
-    }

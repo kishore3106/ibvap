@@ -108,7 +108,7 @@ class ObjectTracker:
         results_list = []
 
         try:
-            # Run Ultralytics with ByteTrack tracker
+            # Run Ultralytics with ByteTrack tracker (optimized imgsz=320 for edge CPU real-time FPS)
             results = self.model.track(
                 source=frame,
                 conf=self.conf_thresh,
@@ -117,7 +117,8 @@ class ObjectTracker:
                 persist=True,
                 tracker="bytetrack.yaml",
                 verbose=False,
-                device="cpu"
+                device="cpu",
+                imgsz=320
             )
 
             if len(results) > 0 and results[0].boxes is not None:

@@ -40,11 +40,18 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Database & Snapshots
+# Database & Snapshots & Generated Reports
 data/ibvap.db
+data/*.json
+!data/email_config.json.example
 data/snapshots/*.jpg
 data/snapshots/*.png
 !data/snapshots/.gitkeep
+data/detections/
+data/email_reports/
+data/logs/
+data/*.jpg
+data/*.png
 
 # IDEs & System
 .vscode/

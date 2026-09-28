@@ -16,12 +16,15 @@ class WebSocketService {
     }
 
     const backend = getBackendBase();
-    const wsProto = backend.startsWith('https') ? 'wss' : 'ws';
-    const cleanHost = backend.replace(/^https?:\/\//, '');
-
-    // Token is sent via AUTH message after connection, NOT as a URL query param
-    // (URL query params can cause 431 Request Header Fields Too Large with httptools)
-    const url = `${wsProto}://${cleanHost}/ws`;
+    let url = '';
+    if (!backend) {
+      const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      url = `${wsProto}://${window.location.host}/ws`;
+    } else {
+      const wsProto = backend.startsWith('https') ? 'wss' : 'ws';
+      const cleanHost = backend.replace(/^https?:\/\//, '');
+      url = `${wsProto}://${cleanHost}/ws`;
+    }
 
     try {
       this.ws = new WebSocket(url);

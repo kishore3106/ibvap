@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, Cpu, Activity, Database, Clock, User, LogOut } from 'lucide-react';
+import { Shield, Cpu, Activity, Database, Clock, User, LogOut, Mail } from 'lucide-react';
 
-export default function Header({ systemStats, currentUser, currentOrg, onSignOut }) {
+export default function Header({ systemStats, currentUser, currentOrg, onSignOut, alertEmail, onOpenEmailSetup }) {
   const [timeStr, setTimeStr] = useState('');
 
   useEffect(() => {
@@ -58,6 +58,22 @@ export default function Header({ systemStats, currentUser, currentOrg, onSignOut
             {systemStats?.queue_mode || 'BUFFER ACTIVE'}
           </span>
         </div>
+
+        {/* Email Alert Quick Status Button */}
+        <button
+          onClick={onOpenEmailSetup}
+          className={`flex items-center space-x-1.5 px-2.5 py-1.5 rounded text-xs font-mono border transition-all ${
+            alertEmail
+              ? 'bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 border-cyan-500/40 shadow-[0_0_8px_rgba(0,240,255,0.15)]'
+              : 'bg-amber-950/60 hover:bg-amber-900/60 text-amber-300 border-amber-500/50 animate-pulse'
+          }`}
+          title="Configure automated breach email dispatch"
+        >
+          <Mail className="w-3.5 h-3.5 text-cyan-400" />
+          <span className="hidden md:inline font-bold">EMAIL:</span>
+          <span className="max-w-[130px] truncate">{alertEmail || 'SET EMAIL'}</span>
+          <span className={`w-1.5 h-1.5 rounded-full ${alertEmail ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`} />
+        </button>
 
         {/* Clock */}
         <div className="hidden xl:flex items-center space-x-2 text-slate-400 border-l border-slate-800 pl-4">

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Camera, RefreshCw, Smartphone, Video, FileVideo, Maximize2, ShieldAlert } from 'lucide-react';
 import { api, getBackendBase } from '../services/api';
 
@@ -7,8 +7,56 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
   const [showSwitchModal, setShowSwitchModal] = useState(false);
   const [customSource, setCustomSource] = useState('');
   const [isSwitching, setIsSwitching] = useState(false);
+  const [streamKey, setStreamKey] = useState(Date.now());
+  const [useSnapshotMode, setUseSnapshotMode] = useState(false);
+  const [snapTick, setSnapTick] = useState(Date.now());
+  const [hasLoaded, setHasLoaded] = useState(false);
 
-  const streamUrl = `${getBackendBase()}/api/v1/stream/video_feed`;
+  const handleFrameLoad = () => {
+    setHasLoaded(true);
+    setStreamError(false);
+    if (useSnapshotMode) {
+      // Progressively request next frame only after current frame finishes rendering
+      setTimeout(() => {
+        setSnapTick(Date.now());
+      }, 40);
+    }
+  };
+
+  const handleFrameError = () => {
+    if (!useSnapshotMode) {
+      console.warn('[LiveFeed] MJPEG stream error. Failing over to snapshot mode.');
+      setUseSnapshotMode(true);
+    } else {
+      // Retry snapshot after brief pause
+      setTimeout(() => {
+        setSnapTick(Date.now());
+      }, 400);
+    }
+  };
+
+  // If MJPEG stream doesn't fire within 3.5 seconds, auto-switch to snapshot mode
+  useEffect(() => {
+    if (useSnapshotMode || hasLoaded) return;
+    const stallTimer = setTimeout(() => {
+      if (!hasLoaded) {
+        console.warn('[LiveFeed] Initial stream stalled. Switching to snapshot engine.');
+        setUseSnapshotMode(true);
+      }
+    }, 3500);
+    return () => clearTimeout(stallTimer);
+  }, [useSnapshotMode, hasLoaded, streamKey]);
+
+  const streamUrl = useSnapshotMode
+    ? `${getBackendBase()}/api/v1/stream/snapshot?t=${snapTick}`
+    : `${getBackendBase()}/api/v1/stream/video_feed?t=${streamKey}`;
+
+  const handleReconnect = () => {
+    setStreamError(false);
+    setHasLoaded(false);
+    setStreamKey(Date.now());
+    setSnapTick(Date.now());
+  };
 
   const handleSwitchSource = async (newSource) => {
     if (!newSource) return;
@@ -20,6 +68,7 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
       await api.switchCameraSource(currentCamera?.camera_id || 'CAM-01', cleanSource);
       if (onSourceChanged) onSourceChanged(cleanSource);
       setShowSwitchModal(false);
+      handleReconnect();
     } catch (e) {
       console.error('Failed to switch source:', e);
     } finally {
@@ -40,22 +89,52 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
           <span className="text-xs font-mono text-slate-300 font-semibold">
             {currentCamera?.camera_id || 'CAM-01'} — {currentCamera?.name || 'North Border Sector'}
           </span>
-          <span className="px-1.5 py-0.5 text-[10px] font-mono uppercase bg-slate-800 text-cyan-400 rounded border border-slate-700">
-            {liveStats?.source_type || 'STREAM'}
+          <span className={`px-1.5 py-0.5 text-[10px] font-mono uppercase rounded border ${
+            liveStats?.source_type === 'file'
+              ? 'bg-amber-950/80 text-amber-300 border-amber-500/50 font-bold'
+              : 'bg-slate-800 text-cyan-400 border-slate-700'
+          }`}>
+            {liveStats?.source_type === 'file' ? 'DEMO CCTV VIDEO' : (liveStats?.source_type || 'STREAM')}
           </span>
           {zones && zones.length > 0 ? (
-            <span className="px-2 py-0.5 text-[10px] font-mono bg-rose-950/70 border border-rose-500/50 rounded text-rose-300 flex items-center space-x-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
-              <span className="font-bold">ZONE ACTIVE: {zones[0].name}</span>
+            <span className="px-2 py-0.5 text-[10px] font-mono bg-rose-950/70 border border-rose-500/50 rounded text-rose-300 flex items-center space-x-1.5 max-w-[280px] sm:max-w-none truncate" title={zones.map(z => z.name).join(' | ')}>
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse shrink-0" />
+              <span className="font-bold truncate">ACTIVE: {zones.map(z => z.name).join(' | ')}</span>
             </span>
           ) : (
             <span className="hidden sm:inline-flex px-1.5 py-0.5 text-[10px] font-mono text-slate-500 border border-slate-800 rounded">
               NO ZONE SET
             </span>
           )}
+
         </div>
 
         <div className="flex items-center space-x-2">
+          {/* Stream Mode Toggle (MJPEG / High-Speed Snapshot) */}
+          <button
+            onClick={() => {
+              setUseSnapshotMode(prev => !prev);
+              handleReconnect();
+            }}
+            className={`px-2 py-1 text-[11px] font-mono rounded border transition-colors ${
+              useSnapshotMode
+                ? 'bg-amber-950/70 text-amber-300 border-amber-500/50 font-bold'
+                : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'
+            }`}
+            title="Toggle between MJPEG Stream and Snapshot Polling Mode (Use if browser connection is congested)"
+          >
+            {useSnapshotMode ? 'MODE: SNAPSHOTS' : 'MODE: MJPEG'}
+          </button>
+
+          {/* Reconnect / Refresh button */}
+          <button
+            onClick={handleReconnect}
+            className="p-1 px-2 text-xs font-mono bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-slate-700 rounded transition-colors"
+            title="Refresh stream connection"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+
           {/* Switch Source Button */}
           <button
             onClick={() => setShowSwitchModal(true)}
@@ -73,28 +152,39 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
         {streamError ? (
           <div className="flex flex-col items-center justify-center p-6 text-center">
             <ShieldAlert className="w-12 h-12 text-rose-500 mb-3 animate-pulse" />
-            <span className="text-sm font-mono font-bold text-rose-400 mb-1">CAMERA FEED OFFLINE</span>
+            <span className="text-sm font-mono font-bold text-rose-400 mb-1">STREAM CONGESTED / OFFLINE</span>
             <p className="text-xs text-slate-500 max-w-sm mb-4">
-              Unable to reach video stream. Ensure your smartphone IP camera app or webcam is active.
+              Browser connection was interrupted or blocked by multiple open tabs.
             </p>
-            <button
-              onClick={() => { setStreamError(false); }}
-              className="flex items-center space-x-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-mono text-cyan-400 rounded border border-slate-700"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>RECONNECT</span>
-            </button>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={handleReconnect}
+                className="flex items-center space-x-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-black font-bold text-xs font-mono rounded"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>RECONNECT STREAM</span>
+              </button>
+              <button
+                onClick={() => {
+                  setUseSnapshotMode(true);
+                  handleReconnect();
+                }}
+                className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-400 text-xs font-mono rounded border border-slate-700"
+              >
+                <span>SWITCH TO SNAPSHOT MODE</span>
+              </button>
+            </div>
           </div>
         ) : (
-          <div className="relative w-full h-full flex items-center justify-center">
+          <div className="relative w-full h-full flex items-center justify-center select-none">
             <img
+              key={useSnapshotMode ? 'snapshot-feed' : `mjpeg-${streamKey}`}
               src={streamUrl}
               alt="IBVAP Real-time Surveillance Stream"
-              onError={() => setStreamError(true)}
+              onLoad={handleFrameLoad}
+              onError={handleFrameError}
               className="w-full h-full object-contain"
             />
-            {/* Subtle tactical radar scan line overlay */}
-            <div className="radar-scan-line" />
           </div>
         )}
 
@@ -103,6 +193,11 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
           <div className="bg-black/60 backdrop-blur-sm border border-slate-800 px-2 py-1 rounded text-[10px] font-mono text-slate-300">
             FPS: <span className="text-cyan-400 font-bold">{liveStats?.fps || 0}</span>
           </div>
+          {useSnapshotMode && (
+            <div className="bg-amber-950/80 border border-amber-500/50 px-2 py-0.5 rounded text-[9px] font-mono text-amber-300 font-bold">
+              ZERO-BLOCK SNAPSHOT ENGINE
+            </div>
+          )}
         </div>
 
         <div className="absolute top-3 right-3 pointer-events-none">

@@ -1,8 +1,20 @@
 import React from 'react';
 import { Camera, User, Car, AlertOctagon, Layers, Gauge } from 'lucide-react';
 
-export default function MetricsGrid({ liveStats, historicalStats }) {
+export default function MetricsGrid({ liveStats, historicalStats, alerts = [], events = [] }) {
   const isOnline = liveStats?.camera_status === 'ONLINE';
+  const unackAlertsCount = Math.max(
+    alerts.filter(a => a.status === 'NEW').length,
+    historicalStats?.active_alerts ?? 0
+  );
+  const criticalCount = Math.max(
+    alerts.filter(a => a.status === 'NEW' && a.severity === 'CRITICAL').length,
+    historicalStats?.critical_alerts ?? 0
+  );
+  const totalEventsToday = Math.max(
+    events.length,
+    historicalStats?.events_today ?? 0
+  );
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
@@ -61,12 +73,12 @@ export default function MetricsGrid({ liveStats, historicalStats }) {
         </div>
         <div className="flex items-baseline space-x-2">
           <span className="text-xl font-mono font-bold text-rose-400">
-            {historicalStats?.active_alerts ?? 0}
+            {unackAlertsCount}
           </span>
           <span className="text-xs text-slate-400 font-mono">UNACKNOWLEDGED</span>
         </div>
         <span className="text-[10px] text-rose-400/80 font-mono">
-          {historicalStats?.critical_alerts ?? 0} CRITICAL
+          {criticalCount} CRITICAL
         </span>
         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-rose-500" />
       </div>
@@ -79,13 +91,14 @@ export default function MetricsGrid({ liveStats, historicalStats }) {
         </div>
         <div className="flex items-baseline space-x-2">
           <span className="text-xl font-mono font-bold text-white">
-            {historicalStats?.events_today ?? 0}
+            {totalEventsToday}
           </span>
           <span className="text-xs text-indigo-400 font-mono">LOGGED</span>
         </div>
         <span className="text-[10px] text-slate-500 font-mono">AUDIT TRAIL</span>
         <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-500" />
       </div>
+
 
       {/* 6. Edge FPS & Latency */}
       <div className="bg-[#0d1117] border border-slate-800 rounded p-3 relative overflow-hidden">

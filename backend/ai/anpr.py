@@ -22,14 +22,17 @@ class ANPRPipeline:
         self.track_plate_history: Dict[int, List[Dict[str, Any]]] = {}
 
     def _init_ocr(self):
-        try:
-            import easyocr
-            logger.info("Initializing EasyOCR reader for ANPR (CPU mode)...")
-            self.reader = easyocr.Reader(self._languages, gpu=False, verbose=False)
-            logger.info("EasyOCR reader initialized successfully.")
-        except Exception as e:
-            logger.error(f"Failed to initialize EasyOCR: {e}")
-            self.reader = None
+        import threading
+        def _load():
+            try:
+                import easyocr
+                logger.info("Initializing EasyOCR reader for ANPR (background thread)...")
+                self.reader = easyocr.Reader(self._languages, gpu=False, verbose=False)
+                logger.info("EasyOCR reader initialized successfully.")
+            except Exception as e:
+                logger.error(f"Failed to initialize EasyOCR: {e}")
+                self.reader = None
+        threading.Thread(target=_load, daemon=True).start()
 
     def _preprocess_plate_crop(self, crop: np.ndarray) -> np.ndarray:
         """Preprocesses cropped plate region to optimize character contrast for OCR."""
@@ -80,9 +83,8 @@ class ANPRPipeline:
             best_conf = 0.0
 
             for (_, text, conf) in results:
-                # Clean alphanumeric characters and hyphens/spaces
                 clean_txt = re.sub(r'[^A-Za-z0-9]', '', text).upper()
-                if len(clean_txt) >= 4 and conf > best_conf:
+                if len(clean_txt) >= 3 and conf > best_conf:
                     best_text = clean_txt
                     best_conf = float(conf)
 
@@ -90,7 +92,7 @@ class ANPRPipeline:
                 return None
 
             # Calibrate confidence: do not invent 100% confidence
-            is_high_conf = (best_conf >= self.min_conf and len(best_text) >= 5)
+            is_high_conf = (best_conf >= 0.35 and len(best_text) >= 4)
             confidence_level = "High Confidence" if is_high_conf else "Low Confidence"
 
             reading = {

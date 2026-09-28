@@ -1,0 +1,9 @@
+{
+  "recipient_email": "operator@example.com",
+  "enabled": true,
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 587,
+  "smtp_user": "your_email@gmail.com",
+  "smtp_password": "your_app_password_here",
+  "smtp_from": "your_email@gmail.com"
+}

@@ -2,6 +2,7 @@ import time
 import logging
 import threading
 import re
+import os
 from typing import Tuple, Optional
 import cv2
 import numpy as np
@@ -59,6 +60,17 @@ class VideoCaptureThread:
             self.is_webcam = True
             logger.info("Source identified as Local Webcam (Index 1)")
             return 1
+
+        # Preset shortcut for Demo Video
+        if src_str.lower() in ["demo", "demo_video", "sample", "demovideo", "border_demo", "data/demo_videos/sample_border.mp4"]:
+            self.is_file = True
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            cand = os.path.join(base_dir, "data", "demo_videos", "sample_border.mp4")
+            if os.path.exists(cand):
+                logger.info(f"Source identified as Demo Video File: {cand}")
+                return cand
+            logger.info(f"Source identified as Demo Video File: {src_str}")
+            return src_str
 
         # 2. Fix protocol typos (e.g., "http:/192.168.1.5" -> "http://192.168.1.5")
         if src_str.startswith("http:/") and not src_str.startswith("http://"):
@@ -173,7 +185,33 @@ class VideoCaptureThread:
             logger.warning(f"Unable to open any local webcam (tried indices: {indices_to_try}).")
             return False
         else:
-            self.cap = cv2.VideoCapture(self.parsed_source)
+            # Local video file
+            file_path = str(self.parsed_source)
+            if not os.path.isabs(file_path):
+                cand1 = os.path.abspath(file_path)
+                cand2 = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", file_path))
+                if os.path.exists(cand1):
+                    file_path = cand1
+                elif os.path.exists(cand2):
+                    file_path = cand2
+
+            logger.info(f"Connecting to video file: {file_path} ...")
+            cap = cv2.VideoCapture(file_path)
+            if cap and cap.isOpened():
+                ret, test_frame = cap.read()
+                if ret and test_frame is not None and test_frame.size > 0:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # rewind to start
+                    self.cap = cap
+                    self.current_frame = test_frame
+                    self.is_connected = True
+                    self.parsed_source = file_path
+                    logger.info(f"Video file successfully opened and verified: {file_path}")
+                    return True
+                cap.release()
+
+            self.is_connected = False
+            logger.warning(f"Failed to open video file: {file_path}")
+            return False
 
     def _capture_worker(self):
         fps_timer = time.time()
@@ -200,10 +238,18 @@ class VideoCaptureThread:
                     logger.info("Reached end of demo video. Looping back to start...")
                     try:
                         self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret, frame = self.cap.read()
                     except Exception:
-                        pass
-                    time.sleep(0.02)
-                    continue
+                        ret, frame = False, None
+
+                    if not ret or frame is None or frame.size == 0:
+                        # Re-open if seek failed
+                        if not self._open_capture():
+                            time.sleep(self.reconnect_delay)
+                            continue
+                        ret, frame = self.cap.read()
+                        if not ret or frame is None:
+                            continue
                 else:
                     consecutive_failures += 1
                     if consecutive_failures >= 3:
@@ -234,9 +280,17 @@ class VideoCaptureThread:
                 frames_in_second = 0
                 fps_timer = now
 
-            # Throttle local video file playback to ~30 FPS
+            # Paced local video file playback matching native FPS (~25 FPS)
             if self.is_file:
-                time.sleep(0.033)
+                target_fps = 25.0
+                try:
+                    if self.cap:
+                        v_fps = self.cap.get(cv2.CAP_PROP_FPS)
+                        if v_fps and 10.0 <= v_fps <= 60.0:
+                            target_fps = v_fps
+                except Exception:
+                    pass
+                time.sleep(1.0 / target_fps)
 
         if self.cap is not None:
             try:

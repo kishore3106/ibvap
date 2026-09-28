@@ -75,7 +75,7 @@ class SecurityRuleEngine:
         self.zone_dwell_tracker: Dict[Tuple[int, str], float] = {}
         # Cooldown cache to prevent spamming duplicate alerts every frame: maps (track_id, rule_type, zone_id) -> last_alert_time
         self.alert_cooldowns: Dict[Tuple[int, str, str], float] = {}
-        self.cooldown_period = 8.0  # seconds between repeated alerts for the same track & zone
+        self.cooldown_period = 6.0  # seconds between repeated alerts for the same track & zone
 
     def _is_cooling_down(self, track_id: int, rule_type: str, zone_id: str, now: float) -> bool:
         key = (track_id, rule_type, zone_id)
@@ -130,13 +130,31 @@ class SecurityRuleEngine:
                 # -------------------------------------------------------------
                 if zone_type == "tripwire":
                     line = zone.get("line_coords", [])
-                    if len(line) == 2 and len(trajectory) >= 2:
-                        p1, p2 = line[0], line[1]
-                        # Check last movement segment
-                        traj_p1 = trajectory[-2]
-                        traj_p2 = trajectory[-1]
-                        if lines_intersect(traj_p1, traj_p2, p1, p2):
+                    if len(line) == 2:
+                        p1, p2 = tuple(line[0]), tuple(line[1])
+                        crossed = False
+
+                        # Check recent trajectory movement segments
+                        if len(trajectory) >= 2:
+                            for idx in range(max(1, len(trajectory) - 6), len(trajectory)):
+                                seg_start = trajectory[idx - 1]
+                                seg_end = trajectory[idx]
+                                if lines_intersect(seg_start, seg_end, p1, p2):
+                                    crossed = True
+                                    break
+
+                        # Check target spine (top-to-bottom centerline) crossing tripwire
+                        if not crossed and bbox and len(bbox) == 4:
+                            bx1, by1, bx2, by2 = bbox
+                            bcx = (bx1 + bx2) // 2
+                            if lines_intersect((bcx, by1), (bcx, by2), p1, p2):
+                                crossed = True
+
+                        if crossed:
                             if not self._is_cooling_down(track_id, "TRIPWIRE_CROSSING", zone_id, now):
+                                plate_num = track.get("plate_number")
+                                plate_conf = track.get("plate_confidence")
+                                plate_str = f" [Plate: {plate_num}]" if plate_num else ""
                                 generated_violations.append({
                                     "rule_type": "TRIPWIRE_CROSSING",
                                     "severity": "CRITICAL",
@@ -147,7 +165,10 @@ class SecurityRuleEngine:
                                     "object_type": obj_class,
                                     "confidence": conf,
                                     "center": center,
-                                    "description": f"Intrusion: {obj_class.capitalize()} #{track_id} breached virtual fence '{zone_name}'",
+                                    "bbox": bbox,
+                                    "plate_number": plate_num,
+                                    "plate_confidence": plate_conf,
+                                    "description": f"Tripwire Breached: {obj_class.capitalize()} #{track_id}{plate_str} crossed '{zone_name}'",
                                     "timestamp": now
                                 })
 
@@ -167,6 +188,9 @@ class SecurityRuleEngine:
                             self.zone_dwell_tracker[dwell_key] = now
 
                         dwell_duration = now - self.zone_dwell_tracker[dwell_key]
+                        plate_num = track.get("plate_number")
+                        plate_conf = track.get("plate_confidence")
+                        plate_str = f" [Plate: {plate_num}]" if plate_num else ""
 
                         # Rule 2A: Zone Intrusion Alert
                         if not self._is_cooling_down(track_id, "ZONE_INTRUSION", zone_id, now):
@@ -181,7 +205,9 @@ class SecurityRuleEngine:
                                 "object_type": obj_class,
                                 "confidence": conf,
                                 "center": center,
-                                "description": f"Unauthorized {obj_class.capitalize()} #{track_id} entered {zone_name}",
+                                "plate_number": plate_num,
+                                "plate_confidence": plate_conf,
+                                "description": f"Unauthorized {obj_class.capitalize()} #{track_id}{plate_str} entered {zone_name}",
                                 "timestamp": now
                             })
 
@@ -200,7 +226,9 @@ class SecurityRuleEngine:
                                     "confidence": conf,
                                     "center": center,
                                     "dwell_time": round(dwell_duration, 1),
-                                    "description": f"Loitering Alert: {obj_class.capitalize()} #{track_id} remained in {zone_name} for {round(dwell_duration, 1)}s (Limit: {zone_dwell_limit}s)",
+                                    "plate_number": plate_num,
+                                    "plate_confidence": plate_conf,
+                                    "description": f"Loitering Alert: {obj_class.capitalize()} #{track_id}{plate_str} remained in {zone_name} for {round(dwell_duration, 1)}s (Limit: {zone_dwell_limit}s)",
                                     "timestamp": now
                                 })
 
@@ -218,7 +246,9 @@ class SecurityRuleEngine:
                                     "confidence": conf,
                                     "center": center,
                                     "direction": direction,
-                                    "description": f"Direction Violation: {obj_class.capitalize()} #{track_id} moving in prohibited direction '{direction}' inside {zone_name}",
+                                    "plate_number": plate_num,
+                                    "plate_confidence": plate_conf,
+                                    "description": f"Direction Violation: {obj_class.capitalize()} #{track_id}{plate_str} moving in prohibited direction '{direction}' inside {zone_name}",
                                     "timestamp": now
                                 })
                     else:

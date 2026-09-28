@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
+import EmailSetupModal from './components/EmailSetupModal';
 import DashboardPage from './pages/DashboardPage';
 import LiveMonitorPage from './pages/LiveMonitorPage';
 import AlertsPage from './pages/AlertsPage';
@@ -8,16 +9,29 @@ import EventHistoryPage from './pages/EventHistoryPage';
 import CamerasPage from './pages/CamerasPage';
 import ZonesPage from './pages/ZonesPage';
 import SettingsPage from './pages/SettingsPage';
-import AuthPage from './pages/AuthPage';
 
 import { api, getAuthUserAndOrg } from './services/api';
 import { wsService } from './services/websocket';
 import { supabase } from './services/supabase';
 
+const DEFAULT_OPERATOR = {
+  id: 'operator-1',
+  email: 'operator@ibvap.internal',
+  user_metadata: { name: 'Tactical Operator' }
+};
+
+const DEFAULT_ORG = {
+  id: 'default-org',
+  name: 'BORDER DEFENSE COMMAND'
+};
+
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [currentOrg, setCurrentOrg] = useState(null);
-  const [authChecking, setAuthChecking] = useState(true);
+  const [currentUser, setCurrentUser] = useState(DEFAULT_OPERATOR);
+  const [currentOrg, setCurrentOrg] = useState(DEFAULT_ORG);
+  const [authChecking, setAuthChecking] = useState(false);
+
+  const [alertEmail, setAlertEmail] = useState(() => localStorage.getItem('ibvap_alert_email') || 'kishore3106avenger@gmail.com');
+  const [showEmailModal, setShowEmailModal] = useState(false);
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [liveStats, setLiveStats] = useState({
@@ -41,17 +55,34 @@ export default function App() {
   const [zones, setZones] = useState([]);
   const [alertBanner, setAlertBanner] = useState(null);
 
+  // Sync email alert config on startup
+  useEffect(() => {
+    api.getEmailAlertConfig().then((cfg) => {
+      if (cfg?.recipient_email) {
+        setAlertEmail(cfg.recipient_email);
+        localStorage.setItem('ibvap_alert_email', cfg.recipient_email);
+      } else {
+        const dismissed = localStorage.getItem('ibvap_email_setup_dismissed');
+        if (!dismissed) {
+          setShowEmailModal(true);
+        }
+      }
+    }).catch(() => {});
+  }, []);
+
   // Check Supabase authentication session on mount
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         setCurrentUser(session.user);
       } else {
-        setCurrentUser(null);
+        setCurrentUser(DEFAULT_OPERATOR);
+        setCurrentOrg(DEFAULT_ORG);
       }
       setAuthChecking(false);
     }).catch(() => {
-      setCurrentUser(null);
+      setCurrentUser(DEFAULT_OPERATOR);
+      setCurrentOrg(DEFAULT_ORG);
       setAuthChecking(false);
     });
 
@@ -59,7 +90,8 @@ export default function App() {
       if (session?.user) {
         setCurrentUser(session.user);
       } else {
-        setCurrentUser(null);
+        setCurrentUser(DEFAULT_OPERATOR);
+        setCurrentOrg(DEFAULT_ORG);
       }
     });
 
@@ -68,17 +100,9 @@ export default function App() {
 
   const handleSignOut = async () => {
     await supabase.auth.signOut().catch(() => {});
-    setCurrentUser(null);
-    setCurrentOrg(null);
-    setAlerts([]);
-    setEvents([]);
-    setZones([]);
-    setHistoricalStats({
-      events_today: 0,
-      active_alerts: 0,
-      critical_alerts: 0,
-      ai_status: 'Ready'
-    });
+    setCurrentUser(DEFAULT_OPERATOR);
+    setCurrentOrg(DEFAULT_ORG);
+    loadInitialData();
   };
 
   // Initial load
@@ -105,18 +129,17 @@ export default function App() {
 
   // Reload data and connect WebSocket whenever active operator changes
   useEffect(() => {
-    if (!currentUser) {
-      setCurrentOrg(null);
-      return;
+    if (!currentOrg) {
+      setCurrentOrg(DEFAULT_ORG);
     }
 
     getAuthUserAndOrg().then(({ org }) => {
       if (org) setCurrentOrg(org);
-    }).catch(console.error);
+    }).catch(() => {});
 
     loadInitialData();
 
-    // Connect WebSocket AFTER authentication so the AUTH handshake has a valid session
+    // Connect WebSocket
     wsService.disconnect();
     wsService.connect();
     const unsubscribe = wsService.subscribe((message) => {
@@ -131,57 +154,51 @@ export default function App() {
         setTimeout(() => setAlertBanner(null), 6000);
 
         // Refresh stats and events
-        api.getStats().then(setHistoricalStats).catch(console.error);
-        api.getEvents({ limit: 20 }).then(setEvents).catch(console.error);
+        api.getStats().then(setHistoricalStats).catch(() => {});
+        api.getEvents({ limit: 20 }).then(setEvents).catch(() => {});
       }
     });
 
-    // Periodic stats refresh (every 10s)
-    const statsTimer = setInterval(() => {
-      api.getStats().then(setHistoricalStats).catch(console.error);
-    }, 10000);
+    // Real-time live telemetry polling fallback (every 1s) to ensure instant FPS & Person counts
+    const liveTelemetryTimer = setInterval(() => {
+      api.getLiveStats().then((data) => {
+        if (data && typeof data.fps !== 'undefined') {
+          setLiveStats(data);
+        }
+      }).catch(() => {});
+    }, 1000);
 
-    // Periodic alert/event refresh (every 5s) — ensures dashboard stays current
+    // Periodic stats refresh (every 3s)
+    const statsTimer = setInterval(() => {
+      api.getStats().then(setHistoricalStats).catch(() => {});
+    }, 3000);
+
+    // Periodic alert/event refresh (every 2.5s) — ensures dashboard and alerts stay current in real time
     const alertRefreshTimer = setInterval(() => {
       api.getAlerts({ limit: 15 }).then(data => {
         if (Array.isArray(data)) setAlerts(data);
-      }).catch(console.error);
+      }).catch(() => {});
       api.getEvents({ limit: 20 }).then(data => {
         if (Array.isArray(data)) setEvents(data);
-      }).catch(console.error);
-    }, 5000);
+      }).catch(() => {});
+      api.getZones().then(data => {
+        if (Array.isArray(data)) setZones(data);
+      }).catch(() => {});
+    }, 2500);
+
 
     return () => {
       unsubscribe();
+      clearInterval(liveTelemetryTimer);
       clearInterval(statsTimer);
       clearInterval(alertRefreshTimer);
     };
   }, [currentUser?.id]);
 
+
   const handleSourceChanged = () => {
     loadInitialData();
   };
-
-  if (authChecking) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center bg-[#07090e] text-cyan-400 font-mono text-sm select-none">
-        <div className="flex flex-col items-center space-y-3">
-          <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin shadow-[0_0_15px_rgba(0,240,255,0.4)]" />
-          <span className="tracking-widest animate-pulse">VERIFYING OPERATOR CLEARANCE...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (!currentUser) {
-    return (
-      <AuthPage
-        onAuthenticated={(user) => {
-          setCurrentUser(user);
-        }}
-      />
-    );
-  }
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#07090e] text-slate-100 overflow-hidden font-sans">
@@ -191,6 +208,8 @@ export default function App() {
         currentUser={currentUser}
         currentOrg={currentOrg}
         onSignOut={handleSignOut}
+        alertEmail={alertEmail}
+        onOpenEmailSetup={() => setShowEmailModal(true)}
       />
 
       {/* High Severity Flash Alert Banner */}
@@ -222,6 +241,7 @@ export default function App() {
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           alertCount={alerts.filter(a => a.status === 'NEW').length}
+          onOpenEmailSetup={() => setShowEmailModal(true)}
         />
 
         <main className="flex-1 flex flex-col bg-[#07090e] overflow-hidden">
@@ -263,6 +283,16 @@ export default function App() {
           {activeTab === 'settings' && <SettingsPage liveStats={liveStats} />}
         </main>
       </div>
+
+      {/* Automated Email Incident Dispatch Setup Modal */}
+      <EmailSetupModal
+        isOpen={showEmailModal}
+        onClose={() => setShowEmailModal(false)}
+        onConfigSaved={(savedEmail) => {
+          setAlertEmail(savedEmail);
+          loadInitialData();
+        }}
+      />
     </div>
   );
 }

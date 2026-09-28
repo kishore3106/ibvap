@@ -6,14 +6,7 @@ export function getBackendBase() {
   if (custom) return custom.replace(/\/+$/, '');
   const envUrl = import.meta.env.VITE_BACKEND_URL;
   if (envUrl) return envUrl.replace(/\/+$/, '');
-  const host = window.location.hostname || '127.0.0.1';
-  if (host === 'localhost' || host === '127.0.0.1') {
-    return 'http://127.0.0.1:8000';
-  }
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
-    return `http://${host}:8000`;
-  }
-  return 'http://127.0.0.1:8000';
+  return '';
 }
 
 export function getApiBase() {
@@ -78,9 +71,6 @@ export async function getAuthUserAndOrg() {
 async function authFetch(url, options = {}, defaultValue = null) {
   try {
     const session = await getAuthSession();
-    if (!url.includes('/health') && !session?.access_token) {
-      return defaultValue;
-    }
     const headers = {
       ...(options.headers || {})
     };
@@ -190,14 +180,28 @@ export const api = {
   },
 
   switchCameraSource: async (cameraId, sourceUrl) => {
-    const { org } = await getAuthUserAndOrg();
-    if (org?.id) {
-      await supabase
-        .from('cameras')
-        .update({ source_url: sourceUrl, status: 'ONLINE', updated_at: new Date().toISOString() })
-        .eq('organization_id', org.id)
-        .eq('camera_id', cameraId);
-    }
+    try {
+      const { org } = await getAuthUserAndOrg();
+      if (org?.id) {
+        await supabase
+          .from('cameras')
+          .update({ source_url: sourceUrl, status: 'ONLINE', updated_at: new Date().toISOString() })
+          .eq('organization_id', org.id)
+          .eq('camera_id', cameraId);
+      }
+    } catch (_) {}
+
+    // Priority 1: POST to FastAPI switch_source endpoint
+    try {
+      const res = await authFetch(`${getApiBase()}/cameras/${cameraId}/switch_source`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_url: sourceUrl })
+      }, null);
+      if (res) return res;
+    } catch (_) {}
+
+    // Fallback: PUT to /source
     return authFetch(`${getApiBase()}/cameras/${cameraId}/source`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -205,48 +209,105 @@ export const api = {
     }, { success: false });
   },
 
-  // Zones (strictly isolated per organization, site, and camera)
-  getZones: async (cameraId = null) => {
-    const { org } = await getAuthUserAndOrg();
-    if (org?.id) {
-      let query = supabase
-        .from('zones')
-        .select('*')
-        .eq('organization_id', org.id)
-        .order('created_at', { ascending: true });
+  // Email Alert Incident Report Integration
+  getEmailAlertConfig: async () => {
+    return authFetch(`${getApiBase()}/alerts/email_config`, {}, {
+      recipient_email: localStorage.getItem('ibvap_alert_email') || '',
+      enabled: true
+    });
+  },
 
-      if (cameraId) {
-        query = query.eq('camera_id', cameraId);
+  saveEmailAlertConfig: async (configOrEmail) => {
+    let payload = {};
+    if (typeof configOrEmail === 'string') {
+      localStorage.setItem('ibvap_alert_email', configOrEmail);
+      payload = { recipient_email: configOrEmail, enabled: true };
+    } else if (typeof configOrEmail === 'object' && configOrEmail !== null) {
+      if (configOrEmail.recipient_email) {
+        localStorage.setItem('ibvap_alert_email', configOrEmail.recipient_email);
       }
+      payload = configOrEmail;
+    }
+    return authFetch(`${getApiBase()}/alerts/email_config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }, { message: 'Saved locally' });
+  },
 
-      const { data, error } = await query;
-      if (!error && Array.isArray(data)) {
-        // Sync backend live pipeline with active zones in background
-        authFetch(`${getApiBase()}/zones/`, {}, []).catch(() => {});
+  testEmailConnection: async (payload) => {
+    return authFetch(`${getApiBase()}/alerts/test_email_connection`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }, { success: false, error: 'Failed connecting to server' });
+  },
+
+  dispatchEmailReport: async (email = null, alertId = null) => {
+    return authFetch(`${getApiBase()}/alerts/dispatch_email_report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, alert_id: alertId })
+    }, { success: false });
+  },
+
+  // Zones (persisted to local SQLite & synchronized with live AI engine, zero auth required)
+  getZones: async (cameraId = null) => {
+    const q = cameraId ? `?camera_id=${cameraId}` : '';
+    // Priority 1: Local FastAPI backend (direct source of truth for live AI pipeline)
+    try {
+      const data = await authFetch(`${getApiBase()}/zones/${q}`, {}, null);
+      if (Array.isArray(data) && data.length > 0) {
         return data;
       }
-    }
+    } catch (_) {}
 
-    const q = cameraId ? `?camera_id=${cameraId}` : '';
-    const data = await authFetch(`${getApiBase()}/zones/${q}`, {}, []);
-    return Array.isArray(data) ? data : [];
+    // Priority 2: Supabase (if online and authenticated)
+    try {
+      const { org } = await getAuthUserAndOrg();
+      if (org?.id) {
+        let query = supabase
+          .from('zones')
+          .select('*')
+          .eq('organization_id', org.id)
+          .order('created_at', { ascending: true });
+
+        if (cameraId) {
+          query = query.eq('camera_id', cameraId);
+        }
+
+        const { data, error } = await query;
+        if (!error && Array.isArray(data) && data.length > 0) {
+          return data;
+        }
+      }
+    } catch (_) {}
+
+    return [];
   },
 
   saveZone: async (zoneData) => {
-    const { org } = await getAuthUserAndOrg();
-    if (!org?.id) throw new Error('Authentication required to save zone');
+    let org = null;
+    try {
+      const auth = await getAuthUserAndOrg();
+      org = auth?.org;
+    } catch (_) {}
+    const orgId = org?.id || 'default-org';
 
     // 1. Fetch cameras for this organization to get exact database UUID and site UUID
-    const cameras = await api.getCameras();
-    const primaryCam = (Array.isArray(cameras) && cameras.length > 0)
-      ? (cameras.find(c => c.id === zoneData.camera_id || c.camera_id === zoneData.camera_id) || cameras[0])
-      : null;
+    let primaryCam = null;
+    try {
+      const cameras = await api.getCameras();
+      if (Array.isArray(cameras) && cameras.length > 0) {
+        primaryCam = cameras.find(c => c.id === zoneData.camera_id || c.camera_id === zoneData.camera_id) || cameras[0];
+      }
+    } catch (_) {}
 
-    const cameraUuid = primaryCam?.id || zoneData.camera_id;
-    const siteUuid = primaryCam?.site_id || zoneData.site_id;
+    const cameraUuid = primaryCam?.id || zoneData.camera_id || 'CAM-01';
+    const siteUuid = primaryCam?.site_id || zoneData.site_id || 'default-site';
 
-    // 2. Normalize polygon points into [{ x, y }] between 0 and 1
-    const rawPoints = zoneData.polygon_data || zoneData.polygon_coords || [];
+    // 2. Normalize polygon/tripwire points into [{ x, y }] between 0 and 1
+    const rawPoints = zoneData.polygon_data || zoneData.polygon_coords || zoneData.line_coords || [];
     const normData = rawPoints.map(pt => {
       let x = 0, y = 0;
       if (typeof pt === 'object' && pt !== null && !Array.isArray(pt)) {
@@ -257,58 +318,61 @@ export const api = {
         y = Number(pt[1]) || 0;
       }
       if (x > 1.0 || y > 1.0) {
-        x = Number((x / 960).toFixed(4));
-        y = Number((y / 540).toFixed(4));
+        x = x / 960.0;
+        y = y / 540.0;
       }
+      x = Math.max(0.0, Math.min(1.0, Number(x.toFixed(4))));
+      y = Math.max(0.0, Math.min(1.0, Number(y.toFixed(4))));
       return { x, y };
     });
 
+
+    const isTripwire = zoneData.zone_type === 'tripwire';
     const payload = {
       zone_id: zoneData.zone_id,
-      name: zoneData.name || 'Border Sector 1',
+      name: zoneData.name || (isTripwire ? 'Virtual Tripwire' : 'Border Sector 1'),
       camera_id: cameraUuid,
       site_id: siteUuid,
       zone_type: zoneData.zone_type || 'polygon',
-      polygon_data: normData,
-      polygon_coords: normData.map(p => [p.x, p.y]),
-      line_coords: zoneData.line_coords || [],
+      polygon_data: isTripwire ? [] : normData,
+      polygon_coords: isTripwire ? [] : normData.map(p => [p.x, p.y]),
+      line_coords: isTripwire ? (zoneData.line_coords?.length ? zoneData.line_coords : normData.map(p => [p.x, p.y])) : [],
       is_restricted: zoneData.is_restricted ?? true,
       dwell_threshold: zoneData.dwell_threshold ?? 10.0,
       prohibited_directions: zoneData.prohibited_directions || [],
-      color: zoneData.color || '#ef4444',
+      color: zoneData.color || (isTripwire ? '#06b6d4' : '#ef4444'),
       enabled: zoneData.enabled ?? true
     };
 
-    // Save to Supabase
-    if (cameraUuid) {
-      const cleanZone = {
-        organization_id: org.id,
-        site_id: siteUuid,
-        camera_id: cameraUuid,
-        zone_id: payload.zone_id,
-        name: payload.name,
-        zone_type: payload.zone_type,
-        polygon_data: payload.polygon_data,
-        polygon_coords: payload.polygon_coords,
-        line_coords: payload.line_coords,
-        is_restricted: payload.is_restricted,
-        dwell_threshold: payload.dwell_threshold,
-        prohibited_directions: payload.prohibited_directions,
-        color: payload.color,
-        enabled: payload.enabled
-      };
+    // 3. Optional Supabase save (non-blocking, skipped in offline/unauthenticated mode)
+    if (org?.id && cameraUuid) {
+      try {
+        const cleanZone = {
+          organization_id: org.id,
+          site_id: siteUuid,
+          camera_id: cameraUuid,
+          zone_id: payload.zone_id,
+          name: payload.name,
+          zone_type: payload.zone_type,
+          polygon_data: payload.polygon_data,
+          polygon_coords: payload.polygon_coords,
+          line_coords: payload.line_coords,
+          is_restricted: payload.is_restricted,
+          dwell_threshold: payload.dwell_threshold,
+          prohibited_directions: payload.prohibited_directions,
+          color: payload.color,
+          enabled: payload.enabled
+        };
 
-      const { error: supaErr } = await supabase
-        .from('zones')
-        .upsert(cleanZone, { onConflict: 'organization_id,zone_id' });
-
-      if (supaErr) {
-        console.error('[IBVAP Zones] Supabase insert error:', supaErr);
-        throw new Error(supaErr.message || 'Database rejected zone insert');
+        await supabase
+          .from('zones')
+          .upsert(cleanZone, { onConflict: 'organization_id,zone_id' });
+      } catch (supaErr) {
+        console.warn('[IBVAP Zones] Supabase insert skipped in local mode:', supaErr);
       }
     }
 
-    // Also send to FastAPI backend to synchronize the in-memory AI engine
+    // 4. Always send directly to FastAPI backend to save to SQLite and update live AI detection engine
     const backendResult = await authFetch(`${getApiBase()}/zones/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -319,132 +383,163 @@ export const api = {
   },
 
   deleteZone: async (zoneId) => {
-    const { org } = await getAuthUserAndOrg();
-    if (org?.id) {
-      const { error } = await supabase
-        .from('zones')
-        .delete()
-        .eq('organization_id', org.id)
-        .eq('zone_id', zoneId);
-      if (error) console.warn('[IBVAP Zones] Supabase delete warning:', error);
-    }
+    try {
+      const { org } = await getAuthUserAndOrg();
+      if (org?.id) {
+        await supabase
+          .from('zones')
+          .delete()
+          .eq('organization_id', org.id)
+          .eq('zone_id', zoneId);
+      }
+    } catch (_) {}
+
     return authFetch(`${getApiBase()}/zones/${zoneId}`, {
       method: 'DELETE'
     }, { success: true });
   },
 
-  // Alerts (strictly isolated per organization via Supabase RLS)
+  // Alerts
   getAlerts: async (params = {}) => {
-    const { org } = await getAuthUserAndOrg();
-    if (org?.id) {
-      let query = supabase
-        .from('alerts')
-        .select('*')
-        .eq('organization_id', org.id)
-        .order('timestamp', { ascending: false });
-
-      if (typeof params === 'object' && params !== null) {
-        if (params.severity) query = query.eq('severity', params.severity.toUpperCase());
-        if (params.status) query = query.eq('status', params.status.toUpperCase());
-        if (params.camera_id) query = query.eq('camera_id', params.camera_id);
-        if (params.limit) query = query.limit(params.limit);
-      } else if (typeof params === 'number') {
-        query = query.limit(params);
-      }
-
-      const { data, error } = await query;
-      if (!error && Array.isArray(data)) return data;
-      if (error) console.error('[IBVAP Alerts] Supabase query error:', error);
-      return [];
-    }
-
     let q = '';
     if (typeof params === 'number') {
       q = `limit=${params}`;
     } else if (typeof params === 'object' && params !== null) {
       q = new URLSearchParams(params).toString();
     }
-    const data = await authFetch(`${getApiBase()}/alerts/${q ? `?${q}` : ''}`, {}, []);
-    return Array.isArray(data) ? data : [];
+
+    // 1. Fetch from local backend first (stores live AI detection alerts in SQLite)
+    const localData = await authFetch(`${getApiBase()}/alerts/${q ? `?${q}` : ''}`, {}, []);
+    if (Array.isArray(localData) && localData.length > 0) {
+      return localData;
+    }
+
+    // 2. Fallback to Supabase if connected
+    try {
+      const { org } = await getAuthUserAndOrg();
+      if (org?.id) {
+        let query = supabase
+          .from('alerts')
+          .select('*')
+          .eq('organization_id', org.id)
+          .order('timestamp', { ascending: false });
+
+        if (typeof params === 'object' && params !== null) {
+          if (params.severity) query = query.eq('severity', params.severity.toUpperCase());
+          if (params.status) query = query.eq('status', params.status.toUpperCase());
+          if (params.camera_id) query = query.eq('camera_id', params.camera_id);
+          if (params.limit) query = query.limit(params.limit);
+        } else if (typeof params === 'number') {
+          query = query.limit(params);
+        }
+
+        const { data, error } = await query;
+        if (!error && Array.isArray(data) && data.length > 0) return data;
+      }
+    } catch (_) {}
+
+    return Array.isArray(localData) ? localData : [];
   },
 
   acknowledgeAlert: async (alertId) => {
-    const { org } = await getAuthUserAndOrg();
-    if (org?.id) {
-      const { error } = await supabase
-        .from('alerts')
-        .update({ status: 'ACKNOWLEDGED' })
-        .eq('organization_id', org.id)
-        .eq('alert_id', alertId);
-      if (!error) return { success: true };
-    }
+    try {
+      const { org } = await getAuthUserAndOrg();
+      if (org?.id) {
+        await supabase
+          .from('alerts')
+          .update({ status: 'ACKNOWLEDGED' })
+          .eq('organization_id', org.id)
+          .eq('alert_id', alertId);
+      }
+    } catch (_) {}
+
     return authFetch(`${getApiBase()}/alerts/${alertId}/acknowledge`, {
       method: 'PATCH'
     }, { success: false });
   },
 
-  // Events (strictly isolated per organization via Supabase RLS)
+  // Events
   getEvents: async (params = {}) => {
-    const { org } = await getAuthUserAndOrg();
-    if (org?.id) {
-      let query = supabase
-        .from('events')
-        .select('*')
-        .eq('organization_id', org.id)
-        .order('timestamp', { ascending: false });
-
-      if (typeof params === 'object' && params !== null) {
-        if (params.camera_id) query = query.eq('camera_id', params.camera_id);
-        if (params.event_type) query = query.eq('event_type', params.event_type.toUpperCase());
-        if (params.limit) query = query.limit(params.limit);
-      } else if (typeof params === 'number') {
-        query = query.limit(params);
-      }
-
-      const { data, error } = await query;
-      if (!error && Array.isArray(data)) return data;
-      if (error) console.error('[IBVAP Events] Supabase query error:', error);
-      return [];
-    }
-
     let q = '';
     if (typeof params === 'number') {
       q = `limit=${params}`;
     } else if (typeof params === 'object' && params !== null) {
       q = new URLSearchParams(params).toString();
     }
-    const data = await authFetch(`${getApiBase()}/events/${q ? `?${q}` : ''}`, {}, []);
-    return Array.isArray(data) ? data : [];
-  },
 
-  // Stats (strictly computed from organization's isolated Supabase tables)
-  getStats: async () => {
-    const { org } = await getAuthUserAndOrg();
-    if (org?.id) {
-      const todayStart = new Date();
-      todayStart.setUTCHours(0, 0, 0, 0);
-
-      const [eventsRes, activeAlertsRes, criticalAlertsRes] = await Promise.all([
-        supabase.from('events').select('id', { count: 'exact', head: true }).eq('organization_id', org.id).gte('timestamp', todayStart.toISOString()),
-        supabase.from('alerts').select('id', { count: 'exact', head: true }).eq('organization_id', org.id).eq('status', 'NEW'),
-        supabase.from('alerts').select('id', { count: 'exact', head: true }).eq('organization_id', org.id).eq('severity', 'CRITICAL').eq('status', 'NEW')
-      ]);
-
-      return {
-        events_today: eventsRes.count || 0,
-        active_alerts: activeAlertsRes.count || 0,
-        critical_alerts: criticalAlertsRes.count || 0,
-        organization_id: org.id,
-        ai_status: `Tenant Isolated (${org.name || 'Cloud Secured'})`
-      };
+    // 1. Fetch from local backend first
+    const localData = await authFetch(`${getApiBase()}/events/${q ? `?${q}` : ''}`, {}, []);
+    if (Array.isArray(localData) && localData.length > 0) {
+      return localData;
     }
 
-    return authFetch(`${getApiBase()}/events/stats`, {}, {
+    // 2. Fallback to Supabase
+    try {
+      const { org } = await getAuthUserAndOrg();
+      if (org?.id) {
+        let query = supabase
+          .from('events')
+          .select('*')
+          .eq('organization_id', org.id)
+          .order('timestamp', { ascending: false });
+
+        if (typeof params === 'object' && params !== null) {
+          if (params.camera_id) query = query.eq('camera_id', params.camera_id);
+          if (params.event_type) query = query.eq('event_type', params.event_type.toUpperCase());
+          if (params.limit) query = query.limit(params.limit);
+        } else if (typeof params === 'number') {
+          query = query.limit(params);
+        }
+
+        const { data, error } = await query;
+        if (!error && Array.isArray(data) && data.length > 0) return data;
+      }
+    } catch (_) {}
+
+    return Array.isArray(localData) ? localData : [];
+  },
+
+  // Real-time telemetry & Historical stats
+  getLiveStats: async () => {
+    return authFetch(`${getApiBase()}/stream/live_stats`, {}, null);
+  },
+
+  getStats: async () => {
+    // 1. Local backend stats (queries SQLite events and alerts)
+    const localStats = await authFetch(`${getApiBase()}/events/stats`, {}, null);
+    if (localStats && (localStats.events_today > 0 || localStats.active_alerts > 0)) {
+      return localStats;
+    }
+
+    // 2. Supabase stats if available
+    try {
+      const { org } = await getAuthUserAndOrg();
+      if (org?.id) {
+        const todayStart = new Date();
+        todayStart.setUTCHours(0, 0, 0, 0);
+
+        const [eventsRes, activeAlertsRes, criticalAlertsRes] = await Promise.all([
+          supabase.from('events').select('id', { count: 'exact', head: true }).eq('organization_id', org.id).gte('timestamp', todayStart.toISOString()),
+          supabase.from('alerts').select('id', { count: 'exact', head: true }).eq('organization_id', org.id).eq('status', 'NEW'),
+          supabase.from('alerts').select('id', { count: 'exact', head: true }).eq('organization_id', org.id).eq('severity', 'CRITICAL').eq('status', 'NEW')
+        ]);
+
+        return {
+          events_today: Math.max(eventsRes.count || 0, localStats?.events_today || 0),
+          active_alerts: Math.max(activeAlertsRes.count || 0, localStats?.active_alerts || 0),
+          critical_alerts: Math.max(criticalAlertsRes.count || 0, localStats?.critical_alerts || 0),
+          organization_id: org.id,
+          ai_status: 'Edge Connected'
+        };
+      }
+    } catch (_) {}
+
+    return localStats || {
       events_today: 0,
       active_alerts: 0,
       critical_alerts: 0,
       ai_status: 'Edge Connected'
-    });
+    };
   },
 
   getEventStats: async () => {

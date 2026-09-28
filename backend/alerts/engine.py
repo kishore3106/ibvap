@@ -41,6 +41,7 @@ class AlertEngine:
         # Cached authenticated JWTs keyed by organization_id: { org_id: { "token": str, "expiry": float } }
         self._org_tokens: Dict[str, Dict[str, Any]] = {}
         self._auth_lock = threading.Lock()
+        self._email_cooldown: Dict[str, float] = {}
 
     def register_org_token(self, organization_id: str, token: str, expires_in: int = 3600):
         """Allows active tenant sessions (from WebSockets or REST) to register their valid JWT directly."""
@@ -122,6 +123,8 @@ class AlertEngine:
         }
 
     def _upload_snapshot_to_supabase(self, jpeg_bytes: bytes, filename: str, organization_id: Optional[str] = None):
+        if not organization_id or organization_id == "default-org":
+            return
         try:
             url = f"{settings.SUPABASE_URL}/storage/v1/object/{settings.SUPABASE_STORAGE_BUCKET}/{filename}"
             auth_headers = self._get_authenticated_headers(organization_id)
@@ -131,26 +134,122 @@ class AlertEngine:
                 "Content-Type": "image/jpeg",
                 "x-upsert": "true"
             }
-            res = requests.post(url, headers=headers, data=jpeg_bytes, timeout=10)
+            res = requests.post(url, headers=headers, data=jpeg_bytes, timeout=2)
             if res.status_code in [200, 201]:
                 logger.info(f"Uploaded evidence snapshot {filename} to Supabase Storage.")
             else:
-                logger.warning(f"Supabase Storage snapshot upload returned {res.status_code}: {res.text}")
+                logger.debug(f"Supabase Storage snapshot upload returned {res.status_code}")
         except Exception as e:
-            logger.error(f"Failed to upload snapshot {filename} to Supabase Storage: {e}")
-            headers = {
-                "Authorization": auth_headers["Authorization"],
-                "apikey": settings.SUPABASE_KEY,
-                "Content-Type": "image/jpeg",
-                "x-upsert": "true"
-            }
-            res = requests.post(url, headers=headers, data=jpeg_bytes, timeout=10)
-            if res.status_code in [200, 201]:
-                logger.info(f"Uploaded evidence snapshot {filename} to Supabase Storage.")
-            else:
-                logger.warning(f"Supabase Storage snapshot upload returned {res.status_code}: {res.text}")
-        except Exception as e:
-            logger.error(f"Failed to upload snapshot {filename} to Supabase Storage: {e}")
+            logger.debug(f"Supabase snapshot upload skipped/failed: {e}")
+
+
+    def _persist_alert_worker(
+        self,
+        alert_dict: Dict[str, Any],
+        event_id: str,
+        frame: Optional[np.ndarray],
+        filename: Optional[str],
+        organization_id: Optional[str]
+    ):
+        """Asynchronous worker: saves snapshot, writes to SQLite, uploads to Supabase, and dispatches email."""
+        # 1. Save local snapshot & upload to cloud
+        if frame is not None and frame.size > 0 and filename:
+            try:
+                local_path = os.path.join(self.snapshot_dir, filename)
+                cv2.imwrite(local_path, frame)
+            except Exception as e:
+                logger.debug(f"Local snapshot backup failed: {e}")
+
+            try:
+                ret, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                if ret:
+                    self._upload_snapshot_to_supabase(buf.tobytes(), filename, organization_id)
+            except Exception:
+                pass
+
+        # 2. Commit to local SQLite database
+        try:
+            db = SessionLocal()
+            local_alert = AlertModel(
+                alert_id=alert_dict["alert_id"],
+                event_type=alert_dict["event_type"],
+                severity=alert_dict["severity"],
+                camera_id=alert_dict["camera_id"],
+                zone_id=alert_dict.get("zone_id"),
+                zone_name=alert_dict.get("zone_name"),
+                object_type=alert_dict.get("object_type"),
+                track_id=alert_dict.get("track_id"),
+                confidence=alert_dict.get("confidence", 0.0),
+                description=alert_dict.get("description", ""),
+                snapshot_path=alert_dict.get("snapshot_path"),
+                status="NEW"
+            )
+            local_event = EventModel(
+                event_id=event_id,
+                camera_id=alert_dict["camera_id"],
+                event_type=alert_dict["event_type"],
+                object_type=alert_dict.get("object_type"),
+                track_id=alert_dict.get("track_id"),
+                confidence=alert_dict.get("confidence", 0.0),
+                plate_number=alert_dict.get("plate_number"),
+                plate_confidence=alert_dict.get("plate_confidence"),
+                zone_name=alert_dict.get("zone_name"),
+                snapshot_path=alert_dict.get("snapshot_path")
+            )
+            db.add(local_alert)
+            db.add(local_event)
+            db.commit()
+            db.close()
+        except Exception as err:
+            logger.debug(f"Local alert SQLite commit error: {err}")
+
+        # 3. Automated Email Incident Report Dispatch
+        try:
+            from backend.services.email_service import get_email_config, send_alert_email_report
+            em_conf = get_email_config()
+            now_sec = time.time()
+            cooldown_key = f"{alert_dict.get('zone_id') or alert_dict.get('zone_name')}_{alert_dict.get('event_type')}"
+            last_sent = self._email_cooldown.get(cooldown_key, 0.0)
+
+            if em_conf.get("enabled") and em_conf.get("recipient_email") and (now_sec - last_sent >= 10.0):
+                self._email_cooldown[cooldown_key] = now_sec
+                logger.info(f"Auto-dispatching breach alert {alert_dict['alert_id']} to {em_conf['recipient_email']}")
+                send_alert_email_report(
+                    em_conf["recipient_email"],
+                    alert_dict,
+                    None,
+                    alert_dict.get("snapshot_path")
+                )
+        except Exception as ex:
+            logger.debug(f"Email dispatch trigger error: {ex}")
+
+        # 4. Optional Supabase remote sync
+        if organization_id and organization_id != "default-org":
+            try:
+                headers = self._get_authenticated_headers(organization_id)
+                requests.post(
+                    f"{settings.SUPABASE_URL}/rest/v1/alerts",
+                    headers=headers,
+                    json={
+                        "alert_id": alert_dict["alert_id"],
+                        "organization_id": organization_id,
+                        "event_type": alert_dict["event_type"],
+                        "severity": alert_dict["severity"],
+                        "camera_id": alert_dict["camera_id"],
+                        "zone_id": alert_dict.get("zone_id"),
+                        "zone_name": alert_dict.get("zone_name"),
+                        "object_type": alert_dict.get("object_type"),
+                        "track_id": alert_dict.get("track_id"),
+                        "confidence": alert_dict.get("confidence"),
+                        "description": alert_dict.get("description"),
+                        "snapshot_path": alert_dict.get("snapshot_path"),
+                        "status": "NEW",
+                        "timestamp": alert_dict["timestamp"]
+                    },
+                    timeout=4
+                )
+            except Exception:
+                pass
 
     def process_violation(
         self,
@@ -160,7 +259,8 @@ class AlertEngine:
         organization_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Creates an alert from a rule violation candidate, uploads snapshot to Supabase Cloud, and commits to DB.
+        Creates an alert instantly and delegates heavy disk/DB/cloud persistence to background thread.
+        This keeps the real-time AI video pipeline running at maximum hardware FPS without hitching.
         """
         alert_id = f"ALT-{uuid.uuid4().hex[:8].upper()}"
         event_id = f"EVT-{uuid.uuid4().hex[:8].upper()}"
@@ -175,25 +275,11 @@ class AlertEngine:
         now_dt = datetime.datetime.utcnow()
         now_iso = now_dt.isoformat()
 
-        # Upload snapshot to Supabase Cloud Storage if frame is available
-        snapshot_url = None
+        filename = None
+        local_snapshot_url = None
         if frame is not None and frame.size > 0:
             filename = f"{alert_id}_{int(time.time())}.jpg"
-            snapshot_url = f"{settings.SUPABASE_URL}/storage/v1/object/public/{settings.SUPABASE_STORAGE_BUCKET}/{filename}"
-            
-            # Encode frame as JPEG
-            ret, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-            if ret:
-                jpeg_bytes = buf.tobytes()
-                # Submit upload task asynchronously (non-blocking for real-time video pipeline)
-                self._executor.submit(self._upload_snapshot_to_supabase, jpeg_bytes, filename, organization_id)
-
-            # Local backup cache
-            try:
-                local_path = os.path.join(self.snapshot_dir, filename)
-                cv2.imwrite(local_path, frame)
-            except Exception as e:
-                logger.debug(f"Local snapshot backup failed: {e}")
+            local_snapshot_url = f"/data/snapshots/{filename}"
 
         alert_dict = {
             "alert_id": alert_id,
@@ -206,69 +292,23 @@ class AlertEngine:
             "object_type": obj_type,
             "track_id": track_id,
             "confidence": conf,
+            "plate_number": violation.get("plate_number"),
+            "plate_confidence": violation.get("plate_confidence"),
             "description": desc,
-            "snapshot_path": snapshot_url,
+            "snapshot_path": local_snapshot_url,
             "timestamp": now_iso,
             "status": "NEW"
         }
 
-        # Persist directly to Supabase if organization_id is known
-        if organization_id:
-            def _persist_to_supabase():
-                try:
-                    headers = self._get_authenticated_headers(organization_id)
-                    
-                    # Insert Alert
-                    alert_res = requests.post(
-                        f"{settings.SUPABASE_URL}/rest/v1/alerts",
-                        headers=headers,
-                        json={
-                            "alert_id": alert_id,
-                            "organization_id": organization_id,
-                            "event_type": rule_type,
-                            "severity": severity,
-                            "camera_id": camera_id,
-                            "zone_id": zone_id,
-                            "zone_name": zone_name,
-                            "object_type": obj_type,
-                            "track_id": track_id,
-                            "confidence": conf,
-                            "description": desc,
-                            "snapshot_path": snapshot_url,
-                            "status": "NEW",
-                            "timestamp": now_iso
-                        },
-                        timeout=15
-                    )
-                    if alert_res.status_code not in [200, 201]:
-                        logger.error(f"Alert insert failed ({alert_res.status_code}): {alert_res.text[:200]}")
-                        return
-                        
-                    # Insert Audit Event
-                    event_res = requests.post(
-                        f"{settings.SUPABASE_URL}/rest/v1/events",
-                        headers=headers,
-                        json={
-                            "event_id": event_id,
-                            "organization_id": organization_id,
-                            "camera_id": camera_id,
-                            "timestamp": now_iso,
-                            "event_type": rule_type,
-                            "object_type": obj_type,
-                            "track_id": track_id,
-                            "confidence": conf,
-                            "zone_name": zone_name,
-                            "snapshot_path": snapshot_url
-                        },
-                        timeout=15
-                    )
-                    if event_res.status_code not in [200, 201]:
-                        logger.error(f"Event insert failed ({event_res.status_code}): {event_res.text[:200]}")
-                        
-                    logger.info(f"Persisted alert {alert_id} & event {event_id} to Supabase for org {organization_id}")
-                except Exception as ex:
-                    logger.error(f"Failed to persist alert to Supabase: {ex}")
-
-            self._executor.submit(_persist_to_supabase)
+        # Asynchronously execute heavy disk snapshot, SQLite insert, and email dispatch
+        frame_copy = frame.copy() if (frame is not None and frame.size > 0) else None
+        self._executor.submit(
+            self._persist_alert_worker,
+            alert_dict,
+            event_id,
+            frame_copy,
+            filename,
+            organization_id
+        )
 
         return alert_dict

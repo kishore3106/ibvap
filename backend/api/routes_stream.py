@@ -34,33 +34,40 @@ def get_standby_frame() -> bytes:
             _standby_frame_bytes = b""
     return _standby_frame_bytes
 
-def generate_mjpeg():
-    """Generates continuous MJPEG multipart stream from pipeline's latest annotated frame."""
-    while True:
-        jpeg_bytes = pipeline.get_latest_jpeg()
-        if jpeg_bytes is None:
-            jpeg_bytes = get_standby_frame()
+import asyncio
 
-        if jpeg_bytes:
-            header = (
-                b'--frame\r\n'
-                b'Content-Type: image/jpeg\r\n'
-                b'Content-Length: ' + str(len(jpeg_bytes)).encode('ascii') + b'\r\n\r\n'
-            )
-            yield header + jpeg_bytes + b'\r\n'
-        time.sleep(0.033)  # ~30 FPS throttle to maintain low CPU load
+async def generate_mjpeg():
+    """Generates continuous MJPEG multipart stream from pipeline's latest annotated frame."""
+    last_count = -1
+    try:
+        while True:
+            cur_count = pipeline.frame_count
+            if cur_count != last_count:
+                jpeg_bytes = pipeline.get_latest_jpeg()
+                if jpeg_bytes is None:
+                    jpeg_bytes = get_standby_frame()
+
+                if jpeg_bytes:
+                    yield (
+                        b'--frame\r\n'
+                        b'Content-Type: image/jpeg\r\n\r\n' + jpeg_bytes + b'\r\n'
+                    )
+                    last_count = cur_count
+            await asyncio.sleep(0.025)
+    except (asyncio.CancelledError, GeneratorExit):
+        pass
 
 @router.get("/video_feed")
-def video_feed():
+async def video_feed():
     """MJPEG Live video stream with real-time AI bounding boxes, tracking IDs, and zone overlays."""
     return StreamingResponse(
         generate_mjpeg(),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate, pre-check=0, post-check=0, max-age=0",
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0",
-            "Connection": "close"
+            "Access-Control-Allow-Origin": "*"
         }
     )
 
@@ -101,4 +108,30 @@ def debug_camera():
         "capture_cap_is_none": pipeline.capture.cap is None,
         "capture_cap_is_opened": pipeline.capture.cap.isOpened() if pipeline.capture.cap else False
     }
+
+@router.get("/live_stats")
+def get_live_stats():
+    """Returns current real-time telemetry from the live AI detection pipeline."""
+    with pipeline._lock:
+        tracks = list(pipeline.latest_tracks) if hasattr(pipeline, "latest_tracks") else []
+        fps_val = round(pipeline.fps, 1)
+        ai_fps_val = round(getattr(pipeline, "ai_fps", 0.0), 1)
+        active_cnt = len(pipeline.active_alerts)
+    person_cnt = sum(1 for t in tracks if t.get("class_name") == "person")
+    veh_cnt = sum(1 for t in tracks if t.get("class_name") in ["car", "bus", "truck", "motorcycle"])
+    meta = pipeline.capture.get_metadata()
+    effective_fps = max(fps_val, ai_fps_val)
+    return {
+        "camera_id": "CAM-01",
+        "fps": effective_fps,
+        "video_fps": fps_val,
+        "ai_fps": ai_fps_val,
+        "camera_status": "ONLINE" if meta.get("is_connected") else "OFFLINE",
+        "person_count": person_cnt,
+        "vehicle_count": veh_cnt,
+        "active_alerts_count": active_cnt,
+        "source_type": meta.get("type", "webcam"),
+        "timestamp": time.time()
+    }
+
 
