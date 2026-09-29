@@ -26,7 +26,7 @@ export function getApiBase() {
 
 export function formatSnapshotUrl(path) {
   if (!path) return '';
-  if (path.startsWith('http://') || path.startsWith('https://')) {
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) {
     return path;
   }
   return `${getBackendBase()}${path.startsWith('/') ? path : `/${path}`}`;
@@ -143,7 +143,13 @@ function getLocalStoredZones() {
     const raw = localStorage.getItem(STORAGE_ZONES_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        if (parsed.some(z => z.name === 'Restricted Sector Alpha' || z.name === 'Center Border Tripwire')) {
+          saveLocalStoredZones(DEFAULT_SAMPLE_ZONES);
+          return DEFAULT_SAMPLE_ZONES;
+        }
+        return parsed;
+      }
     }
   } catch (_) {}
   return [];
@@ -158,27 +164,27 @@ function saveLocalStoredZones(zones) {
 const DEFAULT_SAMPLE_ZONES = [
   {
     zone_id: 'ZONE-DEF-01',
-    name: 'Center Border Tripwire',
+    name: 'Custom Border Sector 1',
     camera_id: 'CAM-01',
     zone_type: 'tripwire',
-    line_coords: [[0.05, 0.55], [0.95, 0.55]],
+    line_coords: [[0.44, 0.05], [0.44, 0.95]],
     polygon_coords: [],
     polygon_data: [],
     is_restricted: true,
     dwell_threshold: 5.0,
-    color: '#06b6d4',
+    color: '#ffffff',
     enabled: true
   },
   {
     zone_id: 'ZONE-DEF-02',
-    name: 'Restricted Sector Alpha',
+    name: 'Custom Border Sector 2',
     camera_id: 'CAM-01',
     zone_type: 'polygon',
-    polygon_coords: [[0.1, 0.2], [0.65, 0.2], [0.65, 0.85], [0.1, 0.85]],
-    polygon_data: [{ x: 0.1, y: 0.2 }, { x: 0.65, y: 0.2 }, { x: 0.65, y: 0.85 }, { x: 0.1, y: 0.85 }],
+    polygon_coords: [[0.14, 0.05], [0.38, 0.05], [0.38, 0.95], [0.14, 0.95]],
+    polygon_data: [{ x: 0.14, y: 0.05 }, { x: 0.38, y: 0.05 }, { x: 0.38, y: 0.95 }, { x: 0.14, y: 0.95 }],
     line_coords: [],
     is_restricted: true,
-    dwell_threshold: 10.0,
+    dwell_threshold: 8.0,
     color: '#ef4444',
     enabled: true
   }

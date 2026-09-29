@@ -214,11 +214,13 @@ export default function App() {
       severity: newAlert.severity || 'CRITICAL',
       status: 'NEW',
       camera_id: newAlert.camera_id || currentCamera?.camera_id || 'CAM-01',
-      zone_name: newAlert.zone_name || 'Restricted Sector Alpha',
+      zone_name: newAlert.zone_name || 'Custom Border Sector 2',
       object_type: newAlert.object_type || 'person',
       track_id: newAlert.track_id || 1,
       confidence: newAlert.confidence || '95%',
       description: newAlert.description || 'Intrusion violation detected in restricted sector',
+      snapshot_path: newAlert.snapshot_path || null,
+      plate_number: newAlert.plate_number || null,
       timestamp: newAlert.timestamp || new Date().toISOString()
     };
 
@@ -233,6 +235,7 @@ export default function App() {
       object_type: formattedAlert.object_type,
       camera_id: formattedAlert.camera_id,
       zone_name: formattedAlert.zone_name,
+      snapshot_path: formattedAlert.snapshot_path,
       timestamp: formattedAlert.timestamp
     };
     setEvents((prev) => [newEvent, ...prev.slice(0, 19)]);
@@ -249,6 +252,14 @@ export default function App() {
 
     // Persist alert directly to SQLite backend, LocalStorage, and Supabase
     api.createAlert(formattedAlert).catch(e => console.warn('Failed saving alert:', e));
+
+    // Automatically send email alert dispatch if recipient is configured
+    const targetEmail = alertEmail || localStorage.getItem('ibvap_alert_email') || 'kishore3106avenger@gmail.com';
+    if (targetEmail) {
+      api.dispatchEmailReport(targetEmail, alertId).catch(err => {
+        console.warn('[IBVAP] Auto email dispatch warning:', err);
+      });
+    }
   };
 
   const handleStatsUpdate = (stats) => {

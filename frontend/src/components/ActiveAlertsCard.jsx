@@ -77,7 +77,10 @@ export default function ActiveAlertsCard({ alerts = [], onAlertUpdated }) {
                   {al.snapshot_path && (
                     <div className="ml-3 shrink-0">
                       <button
-                        onClick={() => setSelectedSnapshot(formatSnapshotUrl(al.snapshot_path))}
+                        onClick={() => setSelectedSnapshot({
+                          url: formatSnapshotUrl(al.snapshot_path),
+                          title: al.description || `CRITICAL ALERT: Unauthorized ${al.object_type || 'Target'} entered ${al.zone_name || 'Perimeter'}`
+                        })}
                         className="relative group block w-16 h-12 rounded border border-slate-700 overflow-hidden bg-black"
                       >
                         <img
@@ -111,18 +114,23 @@ export default function ActiveAlertsCard({ alerts = [], onAlertUpdated }) {
       {/* Snapshot Modal */}
       {selectedSnapshot && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0d1117] border border-cyan-500/40 rounded-lg p-4 max-w-2xl w-full">
+          <div className="bg-[#0d1117] border border-cyan-500/40 rounded-lg p-4 max-w-2xl w-full shadow-[0_0_30px_rgba(0,0,0,0.8)]">
             <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
-              <span className="font-mono font-bold text-white text-xs">VIOLATION SNAPSHOT EVIDENCE</span>
+              <span className="font-mono font-bold text-white text-xs">EVENT SNAPSHOT EVIDENCE</span>
               <button
                 onClick={() => setSelectedSnapshot(null)}
-                className="text-slate-400 hover:text-white font-mono text-sm"
+                className="text-slate-400 hover:text-white font-mono text-sm cursor-pointer"
               >
                 ✕
               </button>
             </div>
-            <div className="bg-black rounded overflow-hidden flex items-center justify-center max-h-[70vh]">
-              <img src={selectedSnapshot} alt="Snapshot detail" className="max-w-full max-h-[70vh] object-contain" />
+            {selectedSnapshot.title && (
+              <div className="bg-red-600 text-white font-mono font-bold text-xs px-3 py-2 rounded-t flex items-center shadow-md">
+                <span>{selectedSnapshot.title}</span>
+              </div>
+            )}
+            <div className={`bg-black rounded-b overflow-hidden flex items-center justify-center max-h-[70vh] border border-slate-800 ${selectedSnapshot.title ? 'border-t-0' : ''}`}>
+              <img src={selectedSnapshot.url} alt="Snapshot evidence" className="max-w-full max-h-[70vh] object-contain" />
             </div>
           </div>
         </div>
