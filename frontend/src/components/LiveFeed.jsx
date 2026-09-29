@@ -37,60 +37,47 @@ async function captureTacticalSnapshot({
     }
 
     // 2. Draw zones
-    if (zones && zones.length > 0) {
-      zones.forEach((z) => {
-        const pts = z.polygon_coords || z.polygon_data || [];
-        if (Array.isArray(pts) && pts.length >= 2) {
-          ctx.beginPath();
-          pts.forEach((p, idx) => {
-            let px = p.x ?? p[0];
-            let py = p.y ?? p[1];
-            if (px <= 1.0) px *= width;
-            if (py <= 1.0) py *= height;
-            if (idx === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-          });
-          ctx.closePath();
-          ctx.fillStyle = 'rgba(239, 68, 68, 0.28)';
-          ctx.fill();
-          ctx.strokeStyle = '#ef4444';
-          ctx.lineWidth = 2.5;
-          ctx.setLineDash([6, 4]);
-          ctx.stroke();
-          ctx.setLineDash([]);
+    if (mode === 'demo' || mode === 'car') {
+      // Demo video coordinate zones
+      ctx.beginPath();
+      ctx.moveTo(370, 220); ctx.lineTo(425, 220); ctx.lineTo(425, 430); ctx.lineTo(370, 430);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.28)';
+      ctx.fill();
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([6, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
 
-          // Vertex dots
-          pts.forEach((p) => {
-            let px = p.x ?? p[0];
-            let py = p.y ?? p[1];
-            if (px <= 1.0) px *= width;
-            if (py <= 1.0) py *= height;
-            ctx.beginPath();
-            ctx.arc(px, py, 4, 0, Math.PI * 2);
-            ctx.fillStyle = '#ffffff';
-            ctx.fill();
-            ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-          });
-        }
+      // Fence line
+      ctx.beginPath();
+      ctx.moveTo(475, 220); ctx.lineTo(475, 430);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else {
+      // Webcam zones
+      ctx.beginPath();
+      ctx.moveTo(35, 20); ctx.lineTo(115, 20); ctx.lineTo(115, 460); ctx.lineTo(35, 460);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.28)';
+      ctx.fill();
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([6, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
 
-        const lines = z.line_coords || [];
-        if (Array.isArray(lines) && lines.length >= 2) {
-          ctx.beginPath();
-          let p1x = lines[0][0] <= 1.0 ? lines[0][0] * width : lines[0][0];
-          let p1y = lines[0][1] <= 1.0 ? lines[0][1] * height : lines[0][1];
-          let p2x = lines[1][0] <= 1.0 ? lines[1][0] * width : lines[1][0];
-          let p2y = lines[1][1] <= 1.0 ? lines[1][1] * height : lines[1][1];
-          ctx.moveTo(p1x, p1y);
-          ctx.lineTo(p2x, p2y);
-          ctx.strokeStyle = '#ffffff';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([5, 3]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-      });
+      ctx.beginPath();
+      ctx.moveTo(140, 20); ctx.lineTo(140, 460);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     // 3. Draw Track Bounding Box and Labels
@@ -142,15 +129,15 @@ async function captureTacticalSnapshot({
         // Connector line to breach zone
         ctx.beginPath();
         ctx.moveTo(bx, by + bh / 2);
-        ctx.lineTo(bx - 60, by + bh / 2);
+        ctx.lineTo(425, by + bh / 2);
         ctx.strokeStyle = '#ef4444';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2.5;
         ctx.stroke();
         ctx.fillStyle = '#ef4444';
-        ctx.fillRect(bx - 190, by + bh / 2 - 10, 175, 20);
+        ctx.fillRect(240, by + bh / 2 - 10, 175, 20);
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 9px monospace';
-        ctx.fillText('BREACH: CUSTOM BORDER SECTOR 2', bx - 185, by + bh / 2 + 4);
+        ctx.fillText('BREACH: CUSTOM BORDER SECTOR 2', 245, by + bh / 2 + 4);
       } else {
         // Person top banner across top
         ctx.fillStyle = '#ef4444';
@@ -170,10 +157,10 @@ async function captureTacticalSnapshot({
         ctx.stroke();
 
         ctx.fillStyle = '#ef4444';
-        ctx.fillRect(90, by + bh / 2 - 10, 160, 20);
+        ctx.fillRect(80, by + bh / 2 - 10, 160, 20);
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 9px monospace';
-        ctx.fillText('BREACH: CUSTOM BORDER SECTOR 2', 95, by + bh / 2 + 4);
+        ctx.fillText('BREACH: CUSTOM BORDER SECTOR 2', 85, by + bh / 2 + 4);
       }
     }
 
@@ -281,7 +268,6 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
         demoClockRef.current = t;
         if (!isDemoPlaying) setIsDemoPlaying(true);
       } else {
-        // Continuous synthetic clock fallback so tracking and alerts NEVER freeze
         demoClockRef.current = (demoClockRef.current + 0.06) % 25.0;
         t = demoClockRef.current;
       }
@@ -291,24 +277,33 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
       let pCount = 0;
       let vCount = 0;
 
-      // 1. Person: active from frame 50 to 350 (2s to 14s)
-      if (frameIdx >= 50 && frameIdx < 350) {
+      // 1. Person: active from frame 50 to 360 (2s to 14.4s)
+      if (frameIdx >= 50 && frameIdx < 360) {
         pCount = 1;
-        let px = 50 + (frameIdx - 50) * 1.5;
-        let py = 320;
+        let px = 50;
+        if (frameIdx < 250) {
+          px = 50 + (frameIdx - 50) * 1.6;
+        } else {
+          px = 370 + 4 * Math.sin(frameIdx * 0.1);
+        }
 
-        // Breach check: inside restricted sector when x >= 240
-        const isBreached = px >= 240;
+        const bx = Math.round(px - 18);
+        const by = 265;
+        const bw = 36;
+        const bh = 95;
+
+        // Breach check: enters Custom Border Sector 2 when px >= 370
+        const isBreached = px >= 370;
         const statusLabel = isBreached ? 'ZONE INTRUSION DETECTED' : 'TRACKED';
 
         const pTrack = {
           id: 1,
-          label: 'PERSON #1',
+          label: isBreached ? 'RESTRICTED BREACH: PERSON #1 (0.95)' : 'PERSON #1',
           confidence: '95%',
-          x: Math.round(px - 25),
-          y: Math.round(py - 60),
-          w: 50,
-          h: 105,
+          x: bx,
+          y: by,
+          w: bw,
+          h: bh,
           color: isBreached ? '#ef4444' : '#10b981',
           isBreach: isBreached,
           isVehicle: false,
@@ -349,17 +344,17 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
         }
       }
 
-      // 2. Vehicle with ANPR: active from frame 370 to 625 (14.8s to 25s)
-      if (frameIdx >= 370) {
+      // 2. Vehicle with ANPR: active from frame 400 to 625 (16s to 25s)
+      if (frameIdx >= 400) {
         vCount = 1;
-        const vx = 930 - (frameIdx - 370) * 4.3;
-        const vy = 345;
-        const vw = 165;
-        const vh = 82;
+        const vx = 950 - (frameIdx - 400) * 4.5;
+        const vy = 340;
+        const vw = 162;
+        const vh = 86;
 
         if (vx > -180 && vx < 980) {
-          // Breach check: car enters restricted border sector when vx <= 620
-          const isBreached = vx <= 620;
+          // Breach check: car enters restricted border sector when vx <= 430
+          const isBreached = vx <= 430;
           const statusLabel = isBreached ? 'ZONE INTRUSION DETECTED' : 'ANPR VERIFIED';
 
           const carTrack = {
@@ -791,58 +786,33 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
             {/* SVG Overlay for zones AND real-time AI bounding boxes drawn over user's live webcam */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 640 480" preserveAspectRatio="none">
               {/* 1. Zones Overlay */}
-              {zones && zones.length > 0 && zones.map((zone, idx) => {
-                // Polygon Corridor (Custom Border Sector 2)
-                const pts = zone.polygon_coords || zone.polygon_data || [];
-                if (Array.isArray(pts) && pts.length >= 2) {
-                  const ptsStr = pts.map(p => {
-                    let px = p.x ?? p[0];
-                    let py = p.y ?? p[1];
-                    if (px <= 1.0 && py <= 1.0) { px = px * 640; py = py * 480; }
-                    return `${px},${py}`;
-                  }).join(' ');
-                  const color = zone.color || '#ef4444';
-                  return (
-                    <g key={zone.zone_id || idx}>
-                      <polygon points={ptsStr} fill={color} fillOpacity="0.22" stroke={color} strokeWidth="2.5" strokeDasharray="5 3" />
-                      {/* Corner vertex dots */}
-                      {pts.map((p, pIdx) => {
-                        let px = p.x ?? p[0];
-                        let py = p.y ?? p[1];
-                        if (px <= 1.0 && py <= 1.0) { px = px * 640; py = py * 480; }
-                        return (
-                          <circle key={pIdx} cx={px} cy={py} r="4" fill="#ffffff" stroke={color} strokeWidth="2" />
-                        );
-                      })}
-                      {/* Zone badge */}
-                      <rect x={35} y={260} width="110" height="20" fill="#0f172a" stroke={color} strokeWidth="1" rx="2" />
-                      <text x={42} y={274} fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
-                        ZONE: Sector 2
-                      </text>
-                    </g>
-                  );
-                }
+              <g key="webcam-sector-2">
+                <polygon
+                  points="35,20 115,20 115,460 35,460"
+                  fill="#ef4444"
+                  fillOpacity="0.22"
+                  stroke="#ef4444"
+                  strokeWidth="2.5"
+                  strokeDasharray="5 3"
+                />
+                <circle cx="35" cy="20" r="4" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <circle cx="115" cy="20" r="4" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <circle cx="115" cy="460" r="4" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <circle cx="35" cy="460" r="4" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <rect x="35" y="260" width="110" height="20" fill="#0f172a" stroke="#ef4444" strokeWidth="1" rx="2" />
+                <text x="42" y="274" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
+                  ZONE: Sector 2
+                </text>
+              </g>
 
-                // Tripwire Line (Custom Border Sector 1)
-                const lines = zone.line_coords || [];
-                if (Array.isArray(lines) && lines.length >= 2) {
-                  let p1x = lines[0][0] <= 1.0 ? lines[0][0] * 640 : lines[0][0];
-                  let p1y = lines[0][1] <= 1.0 ? lines[0][1] * 480 : lines[0][1];
-                  let p2x = lines[1][0] <= 1.0 ? lines[1][0] * 640 : lines[1][0];
-                  let p2y = lines[1][1] <= 1.0 ? lines[1][1] * 480 : lines[1][1];
-                  return (
-                    <g key={zone.zone_id || `line-${idx}`}>
-                      <line x1={p1x} y1={p1y} x2={p2x} y2={p2y} stroke="#ffffff" strokeWidth="2.5" strokeDasharray="4 3" />
-                      <circle cx={p1x} cy={p1y} r="4.5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
-                      <circle cx={p2x} cy={p2y} r="4.5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
-                      <text x={p1x - 10} y={45} fill="#ffffff" fontSize="10" fontFamily="monospace" fontWeight="bold">
-                        FENCE: Sector 1
-                      </text>
-                    </g>
-                  );
-                }
-                return null;
-              })}
+              <g key="webcam-fence-1">
+                <line x1="140" y1="20" x2="140" y2="460" stroke="#ffffff" strokeWidth="2.5" strokeDasharray="4 3" />
+                <circle cx="140" cy="20" r="4.5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <circle cx="140" cy="460" r="4.5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <text x="130" y="45" fill="#ffffff" fontSize="10" fontFamily="monospace" fontWeight="bold">
+                  FENCE: Sector 1
+                </text>
+              </g>
 
               {/* 2. Real-time AI Person Tracking Bounding Box on Webcam */}
               {webcamTracks.map((tr) => (
@@ -958,53 +928,34 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
 
             {/* SVG Overlay for zones AND real-time AI bounding boxes drawn over demo video */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 960 540" preserveAspectRatio="none">
-              {/* 1. Restricted Zones */}
-              {zones && zones.length > 0 && zones.map((zone, idx) => {
-                const pts = zone.polygon_coords || zone.polygon_data || [];
-                if (Array.isArray(pts) && pts.length >= 2) {
-                  const ptsStr = pts.map(p => {
-                    let px = p.x ?? p[0];
-                    let py = p.y ?? p[1];
-                    if (px <= 1.0 && py <= 1.0) { px = px * 960; py = py * 540; }
-                    return `${px},${py}`;
-                  }).join(' ');
-                  const color = zone.color || '#ef4444';
-                  return (
-                    <g key={zone.zone_id || idx}>
-                      <polygon points={ptsStr} fill={color} fillOpacity="0.24" stroke={color} strokeWidth="2.5" strokeDasharray="6 3" />
-                      {pts.map((p, pIdx) => {
-                        let px = p.x ?? p[0];
-                        let py = p.y ?? p[1];
-                        if (px <= 1.0 && py <= 1.0) { px = px * 960; py = py * 540; }
-                        return <circle key={pIdx} cx={px} cy={py} r="5" fill="#ffffff" stroke={color} strokeWidth="2" />;
-                      })}
-                      <rect x={70} y={280} width="150" height="22" fill="#0f172a" stroke={color} strokeWidth="1" rx="2" />
-                      <text x={78} y={295} fill="#ffffff" fontSize="11" fontFamily="monospace" fontWeight="bold">
-                        {zone.name ? `ZONE: ${zone.name}` : `ZONE ${idx + 1}`}
-                      </text>
-                    </g>
-                  );
-                }
+              {/* 1. Restricted Zones positioned over Demo Video */}
+              <g key="demo-sector-2">
+                <polygon
+                  points="370,220 425,220 425,430 370,430"
+                  fill="#ef4444"
+                  fillOpacity="0.25"
+                  stroke="#ef4444"
+                  strokeWidth="2.5"
+                  strokeDasharray="6 3"
+                />
+                <circle cx="370" cy="220" r="5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <circle cx="425" cy="220" r="5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <circle cx="425" cy="430" r="5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <circle cx="370" cy="430" r="5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <rect x="290" y="320" width="130" height="22" fill="#0f172a" stroke="#ef4444" strokeWidth="1" rx="2" />
+                <text x="296" y="335" fill="#ffffff" fontSize="10" fontFamily="monospace" fontWeight="bold">
+                  ZONE: Sector 2
+                </text>
+              </g>
 
-                const lines = zone.line_coords || [];
-                if (Array.isArray(lines) && lines.length >= 2) {
-                  let p1x = lines[0][0] <= 1.0 ? lines[0][0] * 960 : lines[0][0];
-                  let p1y = lines[0][1] <= 1.0 ? lines[0][1] * 540 : lines[0][1];
-                  let p2x = lines[1][0] <= 1.0 ? lines[1][0] * 960 : lines[1][0];
-                  let p2y = lines[1][1] <= 1.0 ? lines[1][1] * 540 : lines[1][1];
-                  return (
-                    <g key={zone.zone_id || `line-${idx}`}>
-                      <line x1={p1x} y1={p1y} x2={p2x} y2={p2y} stroke="#ffffff" strokeWidth="2.5" strokeDasharray="5 3" />
-                      <circle cx={p1x} cy={p1y} r="5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
-                      <circle cx={p2x} cy={p2y} r="5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
-                      <text x={p1x - 10} y={55} fill="#ffffff" fontSize="11" fontFamily="monospace" fontWeight="bold">
-                        FENCE: {zone.name}
-                      </text>
-                    </g>
-                  );
-                }
-                return null;
-              })}
+              <g key="demo-fence-1">
+                <line x1="475" y1="220" x2="475" y2="430" stroke="#ffffff" strokeWidth="2.5" strokeDasharray="5 3" />
+                <circle cx="475" cy="220" r="5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <circle cx="475" cy="430" r="5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
+                <text x="460" y="210" fill="#ffffff" fontSize="11" fontFamily="monospace" fontWeight="bold">
+                  FENCE: Sector 1
+                </text>
+              </g>
 
               {/* 2. Real-time AI Tracking Bounding Boxes (Person & Vehicle with ANPR) */}
               {demoTracks.map((tr) => (
@@ -1015,7 +966,7 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
                     y={tr.y}
                     width={tr.w}
                     height={tr.h}
-                    fill={tr.isBreach ? 'rgba(239, 68, 68, 0.28)' : 'rgba(0, 240, 255, 0.12)'}
+                    fill={tr.isBreach ? 'rgba(239, 68, 68, 0.28)' : (tr.isVehicle ? 'rgba(0, 240, 255, 0.12)' : 'rgba(16, 185, 129, 0.12)')}
                     stroke={tr.color}
                     strokeWidth="2.5"
                   />
@@ -1076,9 +1027,9 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
                       {/* Breach Connector line to Custom Border Sector 2 */}
                       {tr.isBreach && (
                         <g>
-                          <line x1={tr.x} y1={tr.y + tr.h * 0.5} x2={tr.x - 70} y2={tr.y + tr.h * 0.5} stroke="#ef4444" strokeWidth="2" />
-                          <rect x={tr.x - 200} y={tr.y + tr.h * 0.5 - 10} width="175" height="20" fill="#ef4444" rx="2" />
-                          <text x={tr.x - 195} y={tr.y + tr.h * 0.5 + 4} fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
+                          <line x1={tr.x} y1={tr.y + tr.h * 0.5} x2="425" y2={tr.y + tr.h * 0.5} stroke="#ef4444" strokeWidth="2.5" />
+                          <rect x="235" y={tr.y + tr.h * 0.5 - 10} width="175" height="20" fill="#ef4444" rx="2" />
+                          <text x="240" y={tr.y + tr.h * 0.5 + 4} fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
                             BREACH: CUSTOM BORDER SECTOR 2
                           </text>
                         </g>
