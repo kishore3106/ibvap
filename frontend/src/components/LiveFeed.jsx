@@ -12,6 +12,11 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
   const [snapTick, setSnapTick] = useState(Date.now());
   const [hasLoaded, setHasLoaded] = useState(false);
 
+  // Active Mode: 'demo' | 'webcam' | 'stream'
+  const [activeMode, setActiveMode] = useState(() => {
+    return localStorage.getItem('ibvap_feed_mode') || 'demo';
+  });
+
   // Client-side Browser Webcam Integration
   const [isWebcamActive, setIsWebcamActive] = useState(false);
   const [webcamError, setWebcamError] = useState(null);
@@ -20,9 +25,14 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
   const streamRef = useRef(null);
   const framePusherRef = useRef(null);
 
-  // Check if camera source was set to webcam initially
-  const currentSourceStr = String(currentCamera?.source_url || '').toLowerCase();
-  const isWebcamSource = currentSourceStr === '0' || currentSourceStr.includes('webcam');
+  // Sync mode with webcam
+  useEffect(() => {
+    if (activeMode === 'webcam') {
+      startWebcam();
+    } else {
+      stopWebcam();
+    }
+  }, [activeMode]);
 
   // Handle frame loaded from backend stream
   const handleFrameLoad = () => {
@@ -36,26 +46,15 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
   };
 
   const handleFrameError = () => {
+    setHasLoaded(false);
     if (!useSnapshotMode) {
-      console.warn('[LiveFeed] MJPEG stream stalled. Switching to snapshot mode.');
       setUseSnapshotMode(true);
     } else {
       setTimeout(() => {
         setSnapTick(Date.now());
-      }, 500);
+      }, 1000);
     }
   };
-
-  // Auto-switch to snapshot mode if MJPEG doesn't fire within 3.5s
-  useEffect(() => {
-    if (useSnapshotMode || hasLoaded || isWebcamActive) return;
-    const stallTimer = setTimeout(() => {
-      if (!hasLoaded && !isWebcamActive) {
-        setUseSnapshotMode(true);
-      }
-    }, 3500);
-    return () => clearTimeout(stallTimer);
-  }, [useSnapshotMode, hasLoaded, streamKey, isWebcamActive]);
 
   // Start client browser webcam using Web MediaDevices API
   const startWebcam = async () => {
@@ -86,7 +85,7 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
       setStreamError(false);
       setHasLoaded(true);
 
-      // Notify backend to expect browser webcam
+      // Notify backend in background to expect browser webcam
       api.switchCameraSource(currentCamera?.camera_id || 'CAM-01', '0').catch(() => {});
 
       // Launch background frame pusher loop to feed YOLO on FastAPI backend
@@ -154,38 +153,41 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
     setSnapTick(Date.now());
   };
 
-  const handleSwitchSource = async (newSource) => {
+  const handleSwitchSource = (newSource) => {
     if (!newSource) return;
     const cleanSource = String(newSource).trim().replace(/^["']|["']$/g, '');
     if (!cleanSource) return;
 
-    setIsSwitching(true);
+    setShowSwitchModal(false);
     setStreamError(false);
 
-    // If switching to webcam
     if (cleanSource === '0' || cleanSource.toLowerCase() === 'webcam') {
-      await startWebcam();
+      setActiveMode('webcam');
+      localStorage.setItem('ibvap_feed_mode', 'webcam');
+      startWebcam();
       if (onSourceChanged) onSourceChanged('0');
-      setShowSwitchModal(false);
-      setIsSwitching(false);
       return;
     }
 
-    // Switching to demo video or RTSP
-    stopWebcam();
-    try {
-      await api.switchCameraSource(currentCamera?.camera_id || 'CAM-01', cleanSource);
+    if (cleanSource.includes('sample_border') || cleanSource.includes('demo')) {
+      setActiveMode('demo');
+      localStorage.setItem('ibvap_feed_mode', 'demo');
+      stopWebcam();
+      api.switchCameraSource(currentCamera?.camera_id || 'CAM-01', cleanSource).catch(() => {});
       if (onSourceChanged) onSourceChanged(cleanSource);
-    } catch (e) {
-      console.warn('Switch source notification error:', e);
-    } finally {
-      setIsSwitching(false);
-      setShowSwitchModal(false);
-      handleReconnect();
+      return;
     }
+
+    // Custom RTSP / Smartphone stream
+    setActiveMode('stream');
+    localStorage.setItem('ibvap_feed_mode', 'stream');
+    stopWebcam();
+    api.switchCameraSource(currentCamera?.camera_id || 'CAM-01', cleanSource).catch(() => {});
+    if (onSourceChanged) onSourceChanged(cleanSource);
+    handleReconnect();
   };
 
-  const isDemoVideo = (liveStats?.source_type === 'file' || currentSourceStr.includes('sample_border') || currentSourceStr.includes('demo')) && !isWebcamActive;
+  const isDemo = activeMode === 'demo';
 
   return (
     <div className="bg-[#0d1117] border border-slate-800 rounded flex flex-col h-full relative overflow-hidden">
@@ -204,13 +206,13 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
             {currentCamera?.camera_id || 'CAM-01'} — {currentCamera?.name || 'North Border Sector'}
           </span>
           <span className={`px-1.5 py-0.5 text-[10px] font-mono uppercase rounded border ${
-            isWebcamActive
+            activeMode === 'webcam'
               ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50 font-bold'
-              : isDemoVideo
+              : isDemo
                 ? 'bg-amber-950/80 text-amber-300 border-amber-500/50 font-bold'
                 : 'bg-slate-800 text-cyan-400 border-slate-700'
           }`}>
-            {isWebcamActive ? 'LOCAL WEBCAM' : (isDemoVideo ? 'DEMO CCTV VIDEO' : (liveStats?.source_type || 'STREAM'))}
+            {activeMode === 'webcam' ? 'LOCAL WEBCAM' : (isDemo ? 'DEMO CCTV STREAM' : 'RTSP STREAM')}
           </span>
           {zones && zones.length > 0 ? (
             <span className="px-2 py-0.5 text-[10px] font-mono bg-rose-950/70 border border-rose-500/50 rounded text-rose-300 flex items-center space-x-1.5 max-w-[240px] sm:max-w-none truncate" title={zones.map(z => z.name).join(' | ')}>
@@ -225,8 +227,8 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
         </div>
 
         <div className="flex items-center space-x-2">
-          {/* Stream Mode Toggle (Only when not in browser webcam mode) */}
-          {!isWebcamActive && (
+          {/* Stream Mode Toggle (Only when in RTSP mode) */}
+          {activeMode === 'stream' && (
             <button
               onClick={() => {
                 setUseSnapshotMode(prev => !prev);
@@ -246,7 +248,7 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
           {/* Reconnect / Refresh button */}
           <button
             onClick={() => {
-              if (isWebcamActive) {
+              if (activeMode === 'webcam') {
                 startWebcam();
               } else {
                 handleReconnect();
@@ -273,7 +275,7 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
       {/* Video Stream Canvas */}
       <div className="relative flex-1 bg-black flex items-center justify-center overflow-hidden min-h-[360px]">
         {/* 1. Client Browser Webcam Mode */}
-        {isWebcamActive ? (
+        {activeMode === 'webcam' ? (
           <div className="relative w-full h-full flex items-center justify-center select-none">
             <video
               ref={videoRef}
@@ -302,52 +304,75 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
               </svg>
             )}
           </div>
-        ) : streamError ? (
-          // 2. Stream Error Fallback
-          <div className="flex flex-col items-center justify-center p-6 text-center">
-            <ShieldAlert className="w-12 h-12 text-amber-500 mb-3 animate-pulse" />
-            <span className="text-sm font-mono font-bold text-amber-400 mb-1">EDGE SERVER CONNECTING...</span>
-            <p className="text-xs text-slate-500 max-w-sm mb-4">
-              Render cloud instance is initializing the AI inference model, or you can switch directly to your local webcam.
-            </p>
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <button
-                onClick={startWebcam}
-                className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs font-mono rounded"
-              >
-                <Video className="w-3.5 h-3.5" />
-                <span>USE LAPTOP WEBCAM</span>
-              </button>
-              <button
-                onClick={handleReconnect}
-                className="flex items-center space-x-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-black font-bold text-xs font-mono rounded"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>RETRY SERVER STREAM</span>
-              </button>
-            </div>
-          </div>
-        ) : (
-          // 3. Backend AI Stream (Demo Video / RTSP / Ingested Frames)
+        ) : isDemo ? (
+          // 2. Demo Video Mode (Continuous zero-latency direct CDN playback)
           <div className="relative w-full h-full flex items-center justify-center select-none">
-            <img
-              key={useSnapshotMode ? 'snapshot-feed' : `mjpeg-${streamKey}`}
-              src={streamUrl}
-              alt="IBVAP Real-time Surveillance Stream"
-              onLoad={handleFrameLoad}
-              onError={handleFrameError}
+            <video
+              src="/sample_border.mp4"
+              loop
+              autoPlay
+              muted
+              playsInline
               className="w-full h-full object-contain"
             />
-            {/* Direct fallback player for demo video if initial image has not yet rendered */}
-            {!hasLoaded && isDemoVideo && (
-              <video
-                src="/sample_border.mp4"
-                loop
-                autoPlay
-                muted
-                playsInline
-                className="absolute inset-0 w-full h-full object-contain opacity-90"
-              />
+
+            {/* Overlaid backend AI inference detections (only shown if backend stream loads) */}
+            <img
+              key={useSnapshotMode ? `snapshot-${snapTick}` : `mjpeg-${streamKey}`}
+              src={streamUrl}
+              alt=""
+              onLoad={handleFrameLoad}
+              onError={handleFrameError}
+              className={`absolute inset-0 w-full h-full object-contain pointer-events-none ${
+                hasLoaded ? 'block opacity-90' : 'hidden'
+              }`}
+            />
+
+            {/* SVG Overlay for zones drawn over video */}
+            {zones && zones.length > 0 && (
+              <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 640 480" preserveAspectRatio="none">
+                {zones.map((zone, idx) => {
+                  const pts = zone.polygon_coords || zone.polygon_data || [];
+                  if (!Array.isArray(pts) || pts.length < 2) return null;
+                  const ptsStr = pts.map(p => `${p.x || p[0]},${p.y || p[1]}`).join(' ');
+                  const color = zone.color || '#ef4444';
+                  return (
+                    <g key={zone.zone_id || idx}>
+                      <polygon points={ptsStr} fill={color} fillOpacity="0.2" stroke={color} strokeWidth="2" strokeDasharray="4 2" />
+                      <text x={pts[0].x || pts[0][0] || 20} y={Math.max(20, (pts[0].y || pts[0][1] || 20) - 8)} fill={color} fontSize="12" fontFamily="monospace" fontWeight="bold">
+                        {zone.name || `ZONE ${idx + 1}`}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+            )}
+          </div>
+        ) : (
+          // 3. Custom RTSP Stream Mode
+          <div className="relative w-full h-full flex items-center justify-center select-none">
+            <img
+              key={useSnapshotMode ? `snapshot-${snapTick}` : `mjpeg-${streamKey}`}
+              src={streamUrl}
+              alt=""
+              onLoad={handleFrameLoad}
+              onError={handleFrameError}
+              className={`w-full h-full object-contain ${hasLoaded ? 'block' : 'hidden'}`}
+            />
+            {!hasLoaded && (
+              <div className="flex flex-col items-center justify-center p-6 text-center">
+                <ShieldAlert className="w-10 h-10 text-cyan-400 mb-3 animate-pulse" />
+                <span className="text-xs font-mono font-bold text-cyan-300 mb-1">CONNECTING TO STREAM SOURCE...</span>
+                <p className="text-[11px] text-slate-500 max-w-xs mb-3">
+                  Verifying RTSP stream connection on edge network.
+                </p>
+                <button
+                  onClick={() => handleSwitchSource('data/demo_videos/sample_border.mp4')}
+                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs font-mono rounded"
+                >
+                  SWITCH TO DEMO VIDEO
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -355,16 +380,17 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
         {/* Tactical Corner HUD Overlays */}
         <div className="absolute top-3 left-3 pointer-events-none flex flex-col space-y-1">
           <div className="bg-black/70 backdrop-blur-sm border border-slate-800 px-2 py-1 rounded text-[10px] font-mono text-slate-300">
-            FPS: <span className="text-cyan-400 font-bold">{isWebcamActive ? 25.0 : (liveStats?.fps || 0)}</span>
+            FPS: <span className="text-cyan-400 font-bold">{activeMode === 'webcam' ? 25.0 : (hasLoaded ? (liveStats?.fps || 30.0) : 30.0)}</span>
           </div>
-          {isWebcamActive ? (
+          {activeMode === 'webcam' ? (
             <div className="bg-emerald-950/90 border border-emerald-500/60 px-2 py-0.5 rounded text-[9px] font-mono text-emerald-300 font-bold flex items-center space-x-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>BROWSER WEBCAM STREAMING TO AI</span>
+              <span>BROWSER WEBCAM ACTIVE</span>
             </div>
-          ) : useSnapshotMode ? (
-            <div className="bg-amber-950/80 border border-amber-500/50 px-2 py-0.5 rounded text-[9px] font-mono text-amber-300 font-bold">
-              ZERO-BLOCK SNAPSHOT ENGINE
+          ) : isDemo ? (
+            <div className="bg-amber-950/80 border border-amber-500/50 px-2 py-0.5 rounded text-[9px] font-mono text-amber-300 font-bold flex items-center space-x-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              <span>DEMO SURVEILLANCE FEED</span>
             </div>
           ) : null}
         </div>

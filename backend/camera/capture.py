@@ -193,6 +193,16 @@ class VideoCaptureThread:
 
             self.is_connected = False
             logger.warning(f"Unable to open any local webcam (tried indices: {indices_to_try}).")
+
+            # On cloud instances (e.g. Render) without physical webcams, seamlessly fallback to demo video
+            demo_cand = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "demo_videos", "sample_border.mp4"))
+            if os.path.exists(demo_cand):
+                logger.info(f"Host has no hardware webcam. Gracefully falling back to demo video: {demo_cand}")
+                self.is_webcam = False
+                self.is_file = True
+                self.parsed_source = demo_cand
+                return self._open_capture()
+
             return False
         else:
             # Local video file

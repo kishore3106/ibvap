@@ -1,6 +1,6 @@
-import { supabase } from './supabase';
+import { supabase, isSupabaseConfigured } from './supabase';
 
-const FALLBACK_BACKEND_URL = 'https://ibvap-backend.onrender.com';
+const FALLBACK_BACKEND_URL = 'https://ibvap-backend-fkvp.onrender.com';
 
 export function getBackendBase() {
   if (typeof window === 'undefined') return 'http://127.0.0.1:8000';
@@ -36,6 +36,9 @@ let cachedSession = null;
 let sessionFetchTime = 0;
 
 async function getAuthSession() {
+  if (!isSupabaseConfigured()) {
+    return null;
+  }
   try {
     const now = Date.now();
     if (cachedSession && now - sessionFetchTime < 60000) {
@@ -66,6 +69,13 @@ async function getAuthSession() {
 }
 
 export async function getAuthUserAndOrg() {
+  if (!isSupabaseConfigured()) {
+    return {
+      user: { id: 'operator-1', email: 'operator@ibvap.internal', user_metadata: { name: 'Tactical Operator' } },
+      org: { id: 'default-org', name: 'BORDER DEFENSE COMMAND' },
+      token: 'offline-operator-token'
+    };
+  }
   try {
     const session = await getAuthSession();
     if (!session?.user) return { user: null, org: null, token: null };
@@ -125,6 +135,54 @@ async function authFetch(url, options = {}, defaultValue = null) {
     return defaultValue;
   }
 }
+
+const STORAGE_ZONES_KEY = 'ibvap_saved_zones';
+
+function getLocalStoredZones() {
+  try {
+    const raw = localStorage.getItem(STORAGE_ZONES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (_) {}
+  return [];
+}
+
+function saveLocalStoredZones(zones) {
+  try {
+    localStorage.setItem(STORAGE_ZONES_KEY, JSON.stringify(zones));
+  } catch (_) {}
+}
+
+const DEFAULT_SAMPLE_ZONES = [
+  {
+    zone_id: 'ZONE-DEF-01',
+    name: 'Center Border Tripwire',
+    camera_id: 'CAM-01',
+    zone_type: 'tripwire',
+    line_coords: [[0.05, 0.55], [0.95, 0.55]],
+    polygon_coords: [],
+    polygon_data: [],
+    is_restricted: true,
+    dwell_threshold: 5.0,
+    color: '#06b6d4',
+    enabled: true
+  },
+  {
+    zone_id: 'ZONE-DEF-02',
+    name: 'Restricted Sector Alpha',
+    camera_id: 'CAM-01',
+    zone_type: 'polygon',
+    polygon_coords: [[0.1, 0.2], [0.65, 0.2], [0.65, 0.85], [0.1, 0.85]],
+    polygon_data: [{ x: 0.1, y: 0.2 }, { x: 0.65, y: 0.2 }, { x: 0.65, y: 0.85 }, { x: 0.1, y: 0.85 }],
+    line_coords: [],
+    is_restricted: true,
+    dwell_threshold: 10.0,
+    color: '#ef4444',
+    enabled: true
+  }
+];
 
 export const api = {
   // Health
@@ -308,62 +366,36 @@ export const api = {
     }, { success: false });
   },
 
-  // Zones (persisted to local SQLite & synchronized with live AI engine, zero auth required)
+  // Zones (persisted with instant multi-tier resilience: LocalStorage + SQLite + Supabase)
   getZones: async (cameraId = null) => {
-    const q = cameraId ? `?camera_id=${cameraId}` : '';
-    // Priority 1: Local FastAPI backend (direct source of truth for live AI pipeline)
+    const local = getLocalStoredZones();
+
+    // Priority 1: Instant LocalStorage retrieval
+    if (local && local.length > 0) {
+      if (cameraId) {
+        const filtered = local.filter(z => z.camera_id === cameraId);
+        if (filtered.length > 0) return filtered;
+      }
+      return local;
+    }
+
+    // Priority 2: Fast check to backend
     try {
-      const data = await authFetch(`${getApiBase()}/zones/${q}`, {}, null);
+      const q = cameraId ? `?camera_id=${cameraId}` : '';
+      const data = await authFetch(`${getApiBase()}/zones/${q}`, { timeout: 2000 }, null);
       if (Array.isArray(data) && data.length > 0) {
+        saveLocalStoredZones(data);
         return data;
       }
     } catch (_) {}
 
-    // Priority 2: Supabase (if online and authenticated)
-    try {
-      const { org } = await getAuthUserAndOrg();
-      if (org?.id) {
-        let query = supabase
-          .from('zones')
-          .select('*')
-          .eq('organization_id', org.id)
-          .order('created_at', { ascending: true });
-
-        if (cameraId) {
-          query = query.eq('camera_id', cameraId);
-        }
-
-        const { data, error } = await query;
-        if (!error && Array.isArray(data) && data.length > 0) {
-          return data;
-        }
-      }
-    } catch (_) {}
-
-    return [];
+    // Priority 3: Fallback default sample zones
+    saveLocalStoredZones(DEFAULT_SAMPLE_ZONES);
+    return DEFAULT_SAMPLE_ZONES;
   },
 
   saveZone: async (zoneData) => {
-    let org = null;
-    try {
-      const auth = await getAuthUserAndOrg();
-      org = auth?.org;
-    } catch (_) {}
-    const orgId = org?.id || 'default-org';
-
-    // 1. Fetch cameras for this organization to get exact database UUID and site UUID
-    let primaryCam = null;
-    try {
-      const cameras = await api.getCameras();
-      if (Array.isArray(cameras) && cameras.length > 0) {
-        primaryCam = cameras.find(c => c.id === zoneData.camera_id || c.camera_id === zoneData.camera_id) || cameras[0];
-      }
-    } catch (_) {}
-
-    const cameraUuid = primaryCam?.id || zoneData.camera_id || 'CAM-01';
-    const siteUuid = primaryCam?.site_id || zoneData.site_id || 'default-site';
-
-    // 2. Normalize polygon/tripwire points into [{ x, y }] between 0 and 1
+    // 1. Normalize polygon/tripwire points into [{ x, y }] between 0 and 1
     const rawPoints = zoneData.polygon_data || zoneData.polygon_coords || zoneData.line_coords || [];
     const normData = rawPoints.map(pt => {
       let x = 0, y = 0;
@@ -383,13 +415,12 @@ export const api = {
       return { x, y };
     });
 
-
     const isTripwire = zoneData.zone_type === 'tripwire';
     const payload = {
-      zone_id: zoneData.zone_id,
+      zone_id: zoneData.zone_id || `ZONE-${Date.now().toString(36).toUpperCase()}`,
       name: zoneData.name || (isTripwire ? 'Virtual Tripwire' : 'Border Sector 1'),
-      camera_id: cameraUuid,
-      site_id: siteUuid,
+      camera_id: zoneData.camera_id || 'CAM-01',
+      site_id: zoneData.site_id || 'default-site',
       zone_type: zoneData.zone_type || 'polygon',
       polygon_data: isTripwire ? [] : normData,
       polygon_coords: isTripwire ? [] : normData.map(p => [p.x, p.y]),
@@ -401,59 +432,82 @@ export const api = {
       enabled: zoneData.enabled ?? true
     };
 
-    // 3. Optional Supabase save (non-blocking, skipped in offline/unauthenticated mode)
-    if (org?.id && cameraUuid) {
-      try {
-        const cleanZone = {
-          organization_id: org.id,
-          site_id: siteUuid,
-          camera_id: cameraUuid,
-          zone_id: payload.zone_id,
-          name: payload.name,
-          zone_type: payload.zone_type,
-          polygon_data: payload.polygon_data,
-          polygon_coords: payload.polygon_coords,
-          line_coords: payload.line_coords,
-          is_restricted: payload.is_restricted,
-          dwell_threshold: payload.dwell_threshold,
-          prohibited_directions: payload.prohibited_directions,
-          color: payload.color,
-          enabled: payload.enabled
-        };
-
-        await supabase
-          .from('zones')
-          .upsert(cleanZone, { onConflict: 'organization_id,zone_id' });
-      } catch (supaErr) {
-        console.warn('[IBVAP Zones] Supabase insert skipped in local mode:', supaErr);
-      }
+    // 2. Guaranteed instant persistence to LocalStorage
+    const currentLocal = getLocalStoredZones();
+    const existingIdx = currentLocal.findIndex(z => z.zone_id === payload.zone_id);
+    if (existingIdx >= 0) {
+      currentLocal[existingIdx] = { ...currentLocal[existingIdx], ...payload };
+    } else {
+      currentLocal.push(payload);
     }
+    saveLocalStoredZones(currentLocal);
 
-    // 4. Always send directly to FastAPI backend to save to SQLite and update live AI detection engine
-    const backendResult = await authFetch(`${getApiBase()}/zones/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    }, null);
+    // 3. Asynchronously background sync to Supabase & Render without blocking UI
+    (async () => {
+      try {
+        const { org } = await getAuthUserAndOrg();
+        if (org?.id) {
+          supabase
+            .from('zones')
+            .upsert({
+              organization_id: org.id,
+              site_id: payload.site_id,
+              camera_id: payload.camera_id,
+              zone_id: payload.zone_id,
+              name: payload.name,
+              zone_type: payload.zone_type,
+              polygon_data: payload.polygon_data,
+              polygon_coords: payload.polygon_coords,
+              line_coords: payload.line_coords,
+              is_restricted: payload.is_restricted,
+              dwell_threshold: payload.dwell_threshold,
+              prohibited_directions: payload.prohibited_directions,
+              color: payload.color,
+              enabled: payload.enabled
+            }, { onConflict: 'organization_id,zone_id' })
+            .then(() => {})
+            .catch(() => {});
+        }
+      } catch (_) {}
 
-    return backendResult || { success: true, zone_id: payload.zone_id };
+      try {
+        await authFetch(`${getApiBase()}/zones/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          timeout: 2500
+        }, null);
+      } catch (_) {}
+    })();
+
+    return payload;
   },
 
   deleteZone: async (zoneId) => {
+    const updated = getLocalStoredZones().filter(z => z.zone_id !== zoneId);
+    saveLocalStoredZones(updated);
+
     try {
       const { org } = await getAuthUserAndOrg();
       if (org?.id) {
-        await supabase
+        supabase
           .from('zones')
           .delete()
           .eq('organization_id', org.id)
-          .eq('zone_id', zoneId);
+          .eq('zone_id', zoneId)
+          .then(() => {})
+          .catch(() => {});
       }
     } catch (_) {}
 
-    return authFetch(`${getApiBase()}/zones/${zoneId}`, {
-      method: 'DELETE'
-    }, { success: true });
+    try {
+      await authFetch(`${getApiBase()}/zones/${zoneId}`, {
+        method: 'DELETE',
+        timeout: 3000
+      }, { success: true });
+    } catch (_) {}
+
+    return { success: true, zone_id: zoneId };
   },
 
   // Alerts

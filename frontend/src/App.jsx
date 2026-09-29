@@ -196,7 +196,10 @@ export default function App() {
   }, [currentUser?.id]);
 
 
-  const handleSourceChanged = () => {
+  const handleSourceChanged = (newSource) => {
+    if (newSource && currentCamera) {
+      setCurrentCamera(prev => prev ? { ...prev, source_url: newSource } : null);
+    }
     loadInitialData();
   };
 

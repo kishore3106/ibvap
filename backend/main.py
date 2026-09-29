@@ -32,18 +32,28 @@ logger = logging.getLogger("ibvap.main")
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Initializing IBVAP Database schema...")
-    init_db()
+    try:
+        init_db()
+    except Exception as e:
+        logger.error(f"Error initializing DB schema: {e}")
 
-    loop = asyncio.get_running_loop()
-    logger.info("Starting IBVAP Analytics Pipeline...")
-    pipeline.start(event_loop=loop)
+    try:
+        loop = asyncio.get_running_loop()
+        logger.info("Starting IBVAP Analytics Pipeline...")
+        pipeline.start(event_loop=loop)
+    except Exception as e:
+        logger.error(f"Error starting analytics pipeline: {e}")
+
     logger.info(f"IBVAP Platform online at http://{settings.HOST}:{settings.PORT}")
 
     yield
 
     # Shutdown
-    logger.info("Shutting down IBVAP Analytics Pipeline...")
-    pipeline.stop()
+    try:
+        logger.info("Shutting down IBVAP Analytics Pipeline...")
+        pipeline.stop()
+    except Exception as e:
+        logger.error(f"Error stopping pipeline: {e}")
     logger.info("IBVAP terminated cleanly.")
 
 app = FastAPI(
@@ -61,6 +71,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Root Endpoint
+@app.get("/")
+def root():
+    return {
+        "status": "ONLINE",
+        "service": "IBVAP Backend",
+        "platform": "Intelligent Border Video Analytics Platform",
+        "version": "1.0.0",
+        "docs": "/docs"
+    }
 
 # Serve Snapshot Images and Email Reports statically
 os.makedirs("data/snapshots", exist_ok=True)

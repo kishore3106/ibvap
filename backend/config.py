@@ -4,18 +4,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Camera Stream
-    CAMERA_SOURCE: str = "0"
+    CAMERA_SOURCE: str = "data/demo_videos/sample_border.mp4"
     CAMERA_ID: str = "CAM-01"
     CAMERA_NAME: str = "Main Perimeter Camera"
     CAMERA_LOCATION: str = "North Border Test Sector"
-    MODE: str = "live"  # 'live' or 'demo'
+    MODE: str = "demo"  # 'live' or 'demo'
 
     # AI Pipeline
     YOLO_MODEL: str = "yolov8n.pt"
     CONFIDENCE_THRESHOLD: float = 0.45
     IOU_THRESHOLD: float = 0.45
     ENABLE_LOW_LIGHT_CLAHE: bool = False
-    ENABLE_ANPR: bool = True
+    ENABLE_ANPR: bool = False  # Disabled by default on cloud free tier to prevent 512MB RAM OOM crash
 
     # Motion Filter
     MOTION_FILTER_ENABLED: bool = True

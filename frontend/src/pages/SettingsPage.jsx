@@ -1,11 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Cpu, Database, Shield, Smartphone, Info, Globe, Save, Check } from 'lucide-react';
+import { Settings as SettingsIcon, Cpu, Database, Shield, Smartphone, Info, Globe, Save, Check, Key } from 'lucide-react';
 import { api, getBackendBase } from '../services/api';
+import { isSupabaseConfigured, saveSupabaseCredentials } from '../services/supabase';
 
 export default function SettingsPage({ liveStats }) {
   const [healthData, setHealthData] = useState(null);
   const [backendUrl, setBackendUrl] = useState(() => localStorage.getItem('ibvap_backend_url') || getBackendBase());
   const [savedSuccess, setSavedSuccess] = useState(false);
+
+  const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem('ibvap_supabase_url') || '');
+  const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem('ibvap_supabase_key') || '');
+  const [supabaseSavedSuccess, setSupabaseSavedSuccess] = useState(false);
 
   useEffect(() => {
     api.getHealth().then(setHealthData).catch(console.error);
@@ -24,6 +29,18 @@ export default function SettingsPage({ liveStats }) {
       window.location.reload();
     }, 1200);
   };
+
+  const handleSaveSupabase = (e) => {
+    e.preventDefault();
+    saveSupabaseCredentials(supabaseUrl, supabaseKey);
+    setSupabaseSavedSuccess(true);
+    setTimeout(() => {
+      setSupabaseSavedSuccess(false);
+      window.location.reload();
+    }, 1200);
+  };
+
+  const isConfigured = isSupabaseConfigured();
 
   return (
     <div className="flex-1 p-4 flex flex-col space-y-4 overflow-y-auto">
@@ -75,6 +92,68 @@ export default function SettingsPage({ liveStats }) {
               </>
             )}
           </button>
+        </form>
+      </div>
+
+      {/* Supabase Cloud Database Connection */}
+      <div className="bg-[#0d1117] border border-slate-800 rounded p-4 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
+          <div className="flex items-center space-x-2">
+            <Key className="w-4 h-4 text-emerald-400" />
+            <span className="text-xs font-mono font-bold text-white">SUPABASE CLOUD DATABASE CONFIGURATION</span>
+          </div>
+          <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+            isConfigured
+              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40 font-bold'
+              : 'bg-amber-950/80 text-amber-300 border-amber-500/40'
+          }`}>
+            {isConfigured ? 'CONNECTED' : 'LOCAL CACHE MODE'}
+          </span>
+        </div>
+        <p className="text-xs text-slate-400 mb-3">
+          Connect your active Supabase project to sync organizations, cameras, restricted zones, and forensic intrusion audit trails in the cloud. Find these in your <strong>Supabase Dashboard &gt; Project Settings &gt; API</strong>.
+        </p>
+        <form onSubmit={handleSaveSupabase} className="space-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-mono text-slate-400 mb-1">Project URL (e.g. https://xyz.supabase.co)</label>
+              <input
+                type="text"
+                value={supabaseUrl}
+                onChange={(e) => setSupabaseUrl(e.target.value)}
+                placeholder="https://xyzproject.supabase.co"
+                className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded px-3 py-1.5 text-xs font-mono text-white outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-mono text-slate-400 mb-1">Anon / Public API Key</label>
+              <input
+                type="password"
+                value={supabaseKey}
+                onChange={(e) => setSupabaseKey(e.target.value)}
+                placeholder="eyJhbGciOi..."
+                className="w-full bg-slate-950 border border-slate-700 focus:border-emerald-500 rounded px-3 py-1.5 text-xs font-mono text-white outline-none"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end pt-1">
+            <button
+              type="submit"
+              className="flex items-center space-x-1.5 px-4 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-mono font-bold rounded transition-colors"
+            >
+              {supabaseSavedSuccess ? (
+                <>
+                  <Check className="w-3.5 h-3.5" />
+                  <span>CREDENTIALS SAVED!</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" />
+                  <span>SAVE SUPABASE CONFIG</span>
+                </>
+              )}
+            </button>
+          </div>
         </form>
       </div>
 
