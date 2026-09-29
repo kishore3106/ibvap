@@ -164,16 +164,16 @@ async function captureTacticalSnapshot({
         // Connector line
         ctx.beginPath();
         ctx.moveTo(bx, by + bh / 2);
-        ctx.lineTo(245, by + bh / 2);
+        ctx.lineTo(115, by + bh / 2);
         ctx.strokeStyle = '#ef4444';
         ctx.lineWidth = 2;
         ctx.stroke();
 
         ctx.fillStyle = '#ef4444';
-        ctx.fillRect(170, by + bh / 2 - 10, 160, 20);
+        ctx.fillRect(90, by + bh / 2 - 10, 160, 20);
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 9px monospace';
-        ctx.fillText('BREACH: CUSTOM BORDER SECTOR 2', 175, by + bh / 2 + 4);
+        ctx.fillText('BREACH: CUSTOM BORDER SECTOR 2', 95, by + bh / 2 + 4);
       }
     }
 
@@ -232,8 +232,8 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
   const carAlertTimerRef = useRef(0);
   const webcamAlertTimerRef = useRef(0);
 
-  // Smooth position tracking ref for webcam user
-  const personCenterRef = useRef({ x: 420, y: 240 });
+  // Smooth position tracking ref for webcam user (defaults to center/right of camera)
+  const personCenterRef = useRef({ x: 380, y: 240 });
 
   // Synchronized AI Tracking Bounding Boxes for Demo & Webcam
   const [demoTracks, setDemoTracks] = useState([]);
@@ -540,7 +540,6 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
             const r = data[idx];
             const g = data[idx + 1];
             const b = data[idx + 2];
-            // Variance / contrast against ambient
             const diff = Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - 128);
             colVar += diff;
           }
@@ -550,23 +549,25 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
           }
         }
 
-        let detectedX = 420; // default to right/center
+        let detectedX = 400; // default to center/right
         if (totalWeight > 1000) {
           detectedX = weightedXSum / totalWeight;
         }
 
         // Smooth position tracking with lerp
-        personCenterRef.current.x = personCenterRef.current.x * 0.8 + detectedX * 0.2;
+        personCenterRef.current.x = personCenterRef.current.x * 0.85 + detectedX * 0.15;
 
         const currentX = personCenterRef.current.x;
         const bw = 240;
         const bh = 390;
-        const bx = Math.max(30, Math.min(370, Math.round(currentX - bw / 2)));
         const by = 65;
 
-        // Breach check: Custom Border Sector 2 corridor is on the left (x: 90 to 245)
-        // When user moves or leans to the left (bx <= 245 or currentX <= 265), trigger breach!
-        const isBreached = bx <= 245 || currentX <= 265;
+        // Custom Border Sector 2 corridor is on the far-left (x: 32..115 px).
+        // Fence is at x: 140 px.
+        // User naturally sits in the center/right of frame (x: 240..520).
+        // Person breaches ONLY when physically leaning or moving to the left towards the restricted corridor:
+        const isBreached = currentX <= 220 || detectedX <= 200;
+        const bx = isBreached ? 70 : Math.max(160, Math.min(370, Math.round(currentX - bw / 2)));
         const breachedZoneName = 'Custom Border Sector 2';
 
         const trackObj = {
@@ -814,9 +815,9 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
                         );
                       })}
                       {/* Zone badge */}
-                      <rect x={95} y={260} width="160" height="20" fill="#0f172a" stroke={color} strokeWidth="1" rx="2" />
-                      <text x={105} y={274} fill="#ffffff" fontSize="10" fontFamily="monospace" fontWeight="bold">
-                        {zone.name ? `ZONE: ${zone.name}` : `ZONE ${idx + 1}`}
+                      <rect x={35} y={260} width="110" height="20" fill="#0f172a" stroke={color} strokeWidth="1" rx="2" />
+                      <text x={42} y={274} fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
+                        ZONE: Sector 2
                       </text>
                     </g>
                   );
@@ -835,7 +836,7 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
                       <circle cx={p1x} cy={p1y} r="4.5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
                       <circle cx={p2x} cy={p2y} r="4.5" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
                       <text x={p1x - 10} y={45} fill="#ffffff" fontSize="10" fontFamily="monospace" fontWeight="bold">
-                        FENCE: {zone.name}
+                        FENCE: Sector 1
                       </text>
                     </g>
                   );
@@ -863,9 +864,9 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
                         RESTRICTED BREACH: Target inside restricted perimeter zone
                       </text>
                       {/* Horizontal red connector line to zone */}
-                      <line x1="245" y1={tr.y + tr.h * 0.5} x2={tr.x} y2={tr.y + tr.h * 0.5} stroke="#ef4444" strokeWidth="2.5" />
-                      <rect x="150" y={tr.y + tr.h * 0.5 - 10} width="165" height="20" fill="#ef4444" rx="2" />
-                      <text x="155" y={tr.y + tr.h * 0.5 + 4} fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
+                      <line x1="115" y1={tr.y + tr.h * 0.5} x2={tr.x} y2={tr.y + tr.h * 0.5} stroke="#ef4444" strokeWidth="2.5" />
+                      <rect x="85" y={tr.y + tr.h * 0.5 - 10} width="165" height="20" fill="#ef4444" rx="2" />
+                      <text x="90" y={tr.y + tr.h * 0.5 + 4} fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
                         BREACH: CUSTOM BORDER SECTOR 2
                       </text>
                     </g>
@@ -932,7 +933,6 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
             <video
               ref={demoVideoRef}
               key="demo-video-cctv"
-              src="/sample_border.mp4"
               loop
               autoPlay
               muted
@@ -950,7 +950,11 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
               }}
               onPlay={() => setIsDemoPlaying(true)}
               className="w-full h-full object-contain"
-            />
+            >
+              <source src="/sample_border.mp4?v=2" type="video/mp4" />
+              <source src="/sample_border.webm?v=2" type="video/webm" />
+              <source src="data/demo_videos/sample_border.mp4?v=2" type="video/mp4" />
+            </video>
 
             {/* SVG Overlay for zones AND real-time AI bounding boxes drawn over demo video */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 960 540" preserveAspectRatio="none">
@@ -974,8 +978,8 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
                         if (px <= 1.0 && py <= 1.0) { px = px * 960; py = py * 540; }
                         return <circle key={pIdx} cx={px} cy={py} r="5" fill="#ffffff" stroke={color} strokeWidth="2" />;
                       })}
-                      <rect x={130} y={280} width="170" height="22" fill="#0f172a" stroke={color} strokeWidth="1" rx="2" />
-                      <text x={140} y={295} fill="#ffffff" fontSize="11" fontFamily="monospace" fontWeight="bold">
+                      <rect x={70} y={280} width="150" height="22" fill="#0f172a" stroke={color} strokeWidth="1" rx="2" />
+                      <text x={78} y={295} fill="#ffffff" fontSize="11" fontFamily="monospace" fontWeight="bold">
                         {zone.name ? `ZONE: ${zone.name}` : `ZONE ${idx + 1}`}
                       </text>
                     </g>

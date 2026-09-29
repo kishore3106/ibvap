@@ -144,7 +144,12 @@ function getLocalStoredZones() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        if (parsed.some(z => z.name === 'Restricted Sector Alpha' || z.name === 'Center Border Tripwire')) {
+        const needsUpgrade = parsed.some(z =>
+          z.name === 'Restricted Sector Alpha' ||
+          z.name === 'Center Border Tripwire' ||
+          (z.name === 'Custom Border Sector 2' && (z.polygon_coords?.[1]?.[0] > 0.25 || z.polygon_data?.[1]?.x > 0.25))
+        );
+        if (needsUpgrade) {
           saveLocalStoredZones(DEFAULT_SAMPLE_ZONES);
           return DEFAULT_SAMPLE_ZONES;
         }
@@ -167,7 +172,7 @@ const DEFAULT_SAMPLE_ZONES = [
     name: 'Custom Border Sector 1',
     camera_id: 'CAM-01',
     zone_type: 'tripwire',
-    line_coords: [[0.44, 0.05], [0.44, 0.95]],
+    line_coords: [[0.22, 0.04], [0.22, 0.96]],
     polygon_coords: [],
     polygon_data: [],
     is_restricted: true,
@@ -180,8 +185,8 @@ const DEFAULT_SAMPLE_ZONES = [
     name: 'Custom Border Sector 2',
     camera_id: 'CAM-01',
     zone_type: 'polygon',
-    polygon_coords: [[0.14, 0.05], [0.38, 0.05], [0.38, 0.95], [0.14, 0.95]],
-    polygon_data: [{ x: 0.14, y: 0.05 }, { x: 0.38, y: 0.05 }, { x: 0.38, y: 0.95 }, { x: 0.14, y: 0.95 }],
+    polygon_coords: [[0.05, 0.04], [0.18, 0.04], [0.18, 0.96], [0.05, 0.96]],
+    polygon_data: [{ x: 0.05, y: 0.04 }, { x: 0.18, y: 0.04 }, { x: 0.18, y: 0.96 }, { x: 0.05, y: 0.96 }],
     line_coords: [],
     is_restricted: true,
     dwell_threshold: 8.0,
