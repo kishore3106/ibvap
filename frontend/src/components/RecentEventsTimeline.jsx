@@ -2,8 +2,9 @@ import React from 'react';
 import { History, Shield, User, Car, AlertTriangle } from 'lucide-react';
 
 export default function RecentEventsTimeline({ events = [] }) {
-  const getEventIcon = (type, objType) => {
-    if (type.includes('INTRUSION') || type.includes('TRIPWIRE') || type.includes('LOITERING')) {
+  const getEventIcon = (type = '', objType = '') => {
+    const t = String(type || '').toUpperCase();
+    if (t.includes('INTRUSION') || t.includes('TRIPWIRE') || t.includes('LOITERING')) {
       return <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />;
     }
     if (objType === 'person') {
@@ -31,11 +32,11 @@ export default function RecentEventsTimeline({ events = [] }) {
             Awaiting events...
           </div>
         ) : (
-          events.slice(0, 15).map((e) => {
+          events.slice(0, 15).map((e, idx) => {
             const timeFormatted = e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : '';
             return (
               <div
-                key={e.event_id}
+                key={e.event_id || e.id || idx}
                 className="flex items-start space-x-2.5 p-2 rounded bg-slate-900/40 border border-slate-800/80 text-xs"
               >
                 <div className="mt-0.5">
@@ -44,8 +45,8 @@ export default function RecentEventsTimeline({ events = [] }) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline justify-between">
                     <span className="font-mono text-slate-300 text-[11px] font-medium truncate">
-                      {e.event_type.replace('_', ' ')}
-                      {e.object_type ? ` — ${e.object_type.toUpperCase()}` : ''}
+                      {String(e.event_type || 'DETECTION').replace(/_/g, ' ')}
+                      {e.object_type ? ` — ${String(e.object_type).toUpperCase()}` : ''}
                     </span>
                     <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
                       {timeFormatted}

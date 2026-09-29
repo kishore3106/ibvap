@@ -47,28 +47,28 @@ export default function ActiveAlertsCard({ alerts = [], onAlertUpdated }) {
             <span className="text-[11px] text-slate-600">No active rule violations detected</span>
           </div>
         ) : (
-          alerts.map((al) => {
+          alerts.map((al, idx) => {
             const timeFormatted = al.timestamp ? new Date(al.timestamp).toLocaleTimeString() : '';
             return (
               <div
-                key={al.alert_id}
+                key={al.alert_id || al.id || idx}
                 className={`border rounded p-3 relative transition-all ${getSeverityStyle(al.severity)}`}
               >
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="flex items-center space-x-2 mb-1">
                       <span className="font-mono font-bold text-xs tracking-wider">
-                        🚨 {al.event_type.replace('_', ' ')}
+                        🚨 {String(al.event_type || al.rule_type || 'INTRUSION').replace(/_/g, ' ')}
                       </span>
                       <span className="px-1.5 py-0.2 text-[9px] font-mono font-bold rounded uppercase bg-black/40">
-                        {al.severity}
+                        {al.severity || 'CRITICAL'}
                       </span>
                     </div>
 
                     <div className="text-[11px] text-slate-300 font-mono space-y-0.5">
-                      <div><span className="text-slate-500">CAMERA:</span> {al.camera_id}</div>
+                      <div><span className="text-slate-500">CAMERA:</span> {al.camera_id || 'CAM-01'}</div>
                       <div><span className="text-slate-500">ZONE:</span> {al.zone_name || 'Perimeter'}</div>
-                      <div><span className="text-slate-500">TARGET:</span> {al.object_type?.toUpperCase()} {al.track_id ? `#${al.track_id}` : ''} (Conf: {al.confidence})</div>
+                      <div><span className="text-slate-500">TARGET:</span> {String(al.object_type || 'PERSON').toUpperCase()} {al.track_id ? `#${al.track_id}` : ''} {al.confidence ? `(Conf: ${al.confidence})` : ''}</div>
                       <div className="text-slate-400 text-[10px] mt-1">{al.description}</div>
                     </div>
                   </div>

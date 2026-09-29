@@ -203,6 +203,60 @@ export default function App() {
     loadInitialData();
   };
 
+  const handleNewAlert = (newAlert) => {
+    if (!newAlert) return;
+    const alertId = newAlert.alert_id || newAlert.id || `ALT-${Date.now()}`;
+    const formattedAlert = {
+      alert_id: alertId,
+      id: alertId,
+      event_type: newAlert.event_type || newAlert.rule_type || 'RESTRICTED_ZONE_INTRUSION',
+      rule_type: newAlert.rule_type || newAlert.event_type || 'RESTRICTED_ZONE',
+      severity: newAlert.severity || 'CRITICAL',
+      status: 'NEW',
+      camera_id: newAlert.camera_id || currentCamera?.camera_id || 'CAM-01',
+      zone_name: newAlert.zone_name || 'Restricted Sector Alpha',
+      object_type: newAlert.object_type || 'person',
+      track_id: newAlert.track_id || 1,
+      confidence: newAlert.confidence || '95%',
+      description: newAlert.description || 'Intrusion violation detected in restricted sector',
+      timestamp: newAlert.timestamp || new Date().toISOString()
+    };
+
+    setAlerts((prev) => {
+      if (prev.some((a) => (a.alert_id || a.id) === alertId)) return prev;
+      return [formattedAlert, ...prev.slice(0, 19)];
+    });
+
+    const newEvent = {
+      event_id: `EVT-${Date.now()}`,
+      event_type: formattedAlert.event_type,
+      object_type: formattedAlert.object_type,
+      camera_id: formattedAlert.camera_id,
+      zone_name: formattedAlert.zone_name,
+      timestamp: formattedAlert.timestamp
+    };
+    setEvents((prev) => [newEvent, ...prev.slice(0, 19)]);
+
+    setAlertBanner(formattedAlert);
+    setTimeout(() => setAlertBanner(null), 6000);
+
+    setHistoricalStats((prev) => ({
+      ...prev,
+      active_alerts: (prev.active_alerts || 0) + 1,
+      critical_alerts: (prev.critical_alerts || 0) + 1,
+      events_today: (prev.events_today || 0) + 1
+    }));
+  };
+
+  const handleStatsUpdate = (stats) => {
+    if (stats) {
+      setLiveStats((prev) => ({
+        ...prev,
+        ...stats
+      }));
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen w-screen bg-[#07090e] text-slate-100 overflow-hidden font-sans">
       {/* Platform Header */}
@@ -258,6 +312,8 @@ export default function App() {
               zones={zones}
               onAlertUpdated={loadInitialData}
               onSourceChanged={handleSourceChanged}
+              onNewAlert={handleNewAlert}
+              onStatsUpdate={handleStatsUpdate}
             />
           )}
 
@@ -267,6 +323,8 @@ export default function App() {
               currentCamera={currentCamera}
               zones={zones}
               onSourceChanged={handleSourceChanged}
+              onNewAlert={handleNewAlert}
+              onStatsUpdate={handleStatsUpdate}
             />
           )}
 

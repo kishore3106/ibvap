@@ -2,7 +2,7 @@ import React from 'react';
 import LiveFeed from '../components/LiveFeed';
 import { Shield, Eye, Activity, Cpu } from 'lucide-react';
 
-export default function LiveMonitorPage({ liveStats, currentCamera, zones = [], onSourceChanged }) {
+export default function LiveMonitorPage({ liveStats, currentCamera, zones = [], onSourceChanged, onNewAlert, onStatsUpdate }) {
   return (
     <div className="flex-1 p-4 flex flex-col space-y-4 overflow-hidden">
       <div className="flex items-center justify-between">
@@ -31,6 +31,8 @@ export default function LiveMonitorPage({ liveStats, currentCamera, zones = [], 
           currentCamera={currentCamera}
           zones={zones}
           onSourceChanged={onSourceChanged}
+          onNewAlert={onNewAlert}
+          onStatsUpdate={onStatsUpdate}
         />
       </div>
     </div>
