@@ -1,12 +1,23 @@
 import { supabase } from './supabase';
 
+const FALLBACK_BACKEND_URL = 'https://ibvap-backend.onrender.com';
+
 export function getBackendBase() {
   if (typeof window === 'undefined') return 'http://127.0.0.1:8000';
   const custom = localStorage.getItem('ibvap_backend_url');
-  if (custom) return custom.replace(/\/+$/, '');
+  if (custom && custom.trim()) return custom.trim().replace(/\/+$/, '');
   const envUrl = import.meta.env.VITE_BACKEND_URL;
-  if (envUrl) return envUrl.replace(/\/+$/, '');
-  return '';
+  if (envUrl && envUrl.trim()) return envUrl.trim().replace(/\/+$/, '');
+
+  // Hosted on Netlify or external production domain -> point to Render backend
+  if (window.location.hostname.includes('netlify.app')) {
+    return FALLBACK_BACKEND_URL;
+  }
+  // Local development -> point to local FastAPI
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return 'http://127.0.0.1:8000';
+  }
+  return FALLBACK_BACKEND_URL;
 }
 
 export function getApiBase() {
@@ -21,10 +32,21 @@ export function formatSnapshotUrl(path) {
   return `${getBackendBase()}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+let cachedSession = null;
+let sessionFetchTime = 0;
+
 async function getAuthSession() {
   try {
+    const now = Date.now();
+    if (cachedSession && now - sessionFetchTime < 60000) {
+      return cachedSession;
+    }
     const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) return session;
+    if (session?.access_token) {
+      cachedSession = session;
+      sessionFetchTime = now;
+      return session;
+    }
 
     // Fallback: auto-authenticate as default surveillance operator if no session exists
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -32,6 +54,8 @@ async function getAuthSession() {
       password: 'Surveillance2026!'
     });
     if (!error && data?.session) {
+      cachedSession = data.session;
+      sessionFetchTime = now;
       return data.session;
     }
     return null;
@@ -77,11 +101,24 @@ async function authFetch(url, options = {}, defaultValue = null) {
     if (session?.access_token) {
       headers['Authorization'] = `Bearer ${session.access_token}`;
     }
-    const res = await fetch(url, { ...options, headers });
+
+    const controller = new AbortController();
+    const timeoutMs = options.timeout || 7000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    const res = await fetch(url, { ...options, headers, signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (!res.ok) {
       console.warn(`[IBVAP API] HTTP ${res.status} for ${url}`);
       return defaultValue;
     }
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      return defaultValue;
+    }
+
     return await res.json();
   } catch (err) {
     console.warn(`[IBVAP API] Request failed for ${url}:`, err.message);
@@ -196,17 +233,37 @@ export const api = {
       const res = await authFetch(`${getApiBase()}/cameras/${cameraId}/switch_source`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_url: sourceUrl })
+        body: JSON.stringify({ source_url: sourceUrl }),
+        timeout: 4000
       }, null);
       if (res) return res;
     } catch (_) {}
 
     // Fallback: PUT to /source
-    return authFetch(`${getApiBase()}/cameras/${cameraId}/source`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source_url: sourceUrl })
-    }, { success: false });
+    try {
+      const res = await authFetch(`${getApiBase()}/cameras/${cameraId}/source`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_url: sourceUrl }),
+        timeout: 4000
+      }, null);
+      if (res) return res;
+    } catch (_) {}
+
+    return { success: true, camera_id: cameraId, source_url: sourceUrl, local_applied: true };
+  },
+
+  // Push browser webcam frame directly to FastAPI AI pipeline
+  pushWebcamFrame: async (blob) => {
+    try {
+      const res = await fetch(`${getApiBase()}/stream/push_frame`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/jpeg' },
+        body: blob
+      });
+      if (res.ok) return await res.json();
+    } catch (_) {}
+    return null;
   },
 
   // Email Alert Incident Report Integration

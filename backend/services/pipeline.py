@@ -148,6 +148,18 @@ class AnalyticsPipeline:
             self.camera_source = new_source
             self.capture = VideoCaptureThread(source=new_source).start()
 
+    def ingest_external_frame(self, frame: np.ndarray):
+        """Allows direct ingestion of client-side webcam frames streamed from browser."""
+        with self._lock:
+            self.capture.current_frame = frame
+            self.capture.last_frame_time = time.time()
+            self.capture.is_connected = True
+            self.capture.fps = 25.0
+            self.capture.is_webcam = True
+            self.capture.raw_source = "browser_webcam"
+            self.capture.parsed_source = "browser_webcam"
+            self.inference_frame = frame
+
     def start(self, event_loop=None):
         if self.is_running:
             return

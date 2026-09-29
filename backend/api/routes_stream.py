@@ -1,7 +1,7 @@
 import time
 import cv2
 import numpy as np
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Response, Request
 from fastapi.responses import StreamingResponse
 
 from backend.services.pipeline import pipeline
@@ -133,5 +133,32 @@ def get_live_stats():
         "source_type": meta.get("type", "webcam"),
         "timestamp": time.time()
     }
+
+@router.post("/push_frame")
+async def push_frame(request: Request):
+    """
+    Receives live webcam frame uploaded by client browser (Netlify/Local frontend),
+    ingests directly into the AI surveillance pipeline, and updates real-time analytics.
+    """
+    try:
+        body = await request.body()
+        if not body:
+            return {"status": "error", "detail": "Empty frame body"}
+
+        nparr = np.frombuffer(body, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if frame is None or frame.size == 0:
+            return {"status": "error", "detail": "Corrupt or unreadable frame"}
+
+        pipeline.ingest_external_frame(frame)
+        return {
+            "status": "ok",
+            "fps": pipeline.fps,
+            "tracks": len(pipeline.latest_tracks),
+            "alerts": len(pipeline.active_alerts)
+        }
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
 
 

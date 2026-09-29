@@ -60,6 +60,11 @@ class VideoCaptureThread:
             self.is_webcam = True
             logger.info("Source identified as Local Webcam (Index 1)")
             return 1
+        elif src_str.lower() in ["browser", "browser_webcam", "client_webcam"]:
+            self.is_webcam = True
+            self.is_browser_webcam = True
+            logger.info("Source identified as Browser-Client Webcam Ingestion")
+            return "browser_webcam"
 
         # Preset shortcut for Demo Video
         if src_str.lower() in ["demo", "demo_video", "sample", "demovideo", "border_demo", "data/demo_videos/sample_border.mp4"]:
@@ -126,6 +131,11 @@ class VideoCaptureThread:
             self.cap = None
 
         logger.info(f"Connecting to video source: {self.parsed_source} ...")
+
+        if getattr(self, "is_browser_webcam", False) or str(self.parsed_source) == "browser_webcam":
+            self.is_connected = True
+            logger.info("Browser webcam ingestion mode active — awaiting frames from web client.")
+            return True
 
         if self.is_network_stream:
             # For network streams (HTTP MJPEG or RTSP), try FFMPEG backend first, then fallback to CAP_ANY
@@ -219,6 +229,10 @@ class VideoCaptureThread:
         consecutive_failures = 0
 
         while self.is_running:
+            if getattr(self, "is_browser_webcam", False) or str(self.parsed_source) == "browser_webcam":
+                time.sleep(0.02)
+                continue
+
             if self.cap is None or not self.cap.isOpened() or not self.is_connected:
                 if not self._open_capture():
                     time.sleep(self.reconnect_delay)

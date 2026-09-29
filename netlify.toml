@@ -3,7 +3,28 @@
   publish = "dist"
   command = "npm run build"
 
+[build.environment]
+  VITE_BACKEND_URL = "https://ibvap-backend.onrender.com"
+  VITE_SUPABASE_URL = "https://epgibdkihcswaaresftw.supabase.co"
+  VITE_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwZ2liZGtpaGNzd2FhcmVzZnR3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkwNjMxOTcsImV4cCI6MjEwNDYzOTE5N30.echJzPzlM0UYhLjZ__TW7ldf_o52CFHDNtPfqhpMovU"
+
+# Proxy REST API requests to Render backend
+[[redirects]]
+  from = "/api/*"
+  to = "https://ibvap-backend.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+# Proxy snapshots to Render backend
+[[redirects]]
+  from = "/data/snapshots/*"
+  to = "https://ibvap-backend.onrender.com/data/snapshots/:splat"
+  status = 200
+  force = true
+
+# Single Page App routing fallback
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+

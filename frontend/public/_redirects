@@ -1,1 +1,4 @@
+/api/*  https://ibvap-backend.onrender.com/api/:splat  200!
+/data/snapshots/*  https://ibvap-backend.onrender.com/data/snapshots/:splat  200!
 /*    /index.html   200
+
