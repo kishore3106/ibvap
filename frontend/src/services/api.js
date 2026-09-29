@@ -549,6 +549,12 @@ export const api = {
       }
     } catch (_) {}
 
+    // 3. Fallback to LocalStorage
+    try {
+      const cached = JSON.parse(localStorage.getItem('ibvap_saved_alerts') || '[]');
+      if (Array.isArray(cached) && cached.length > 0) return cached;
+    } catch (_) {}
+
     return Array.isArray(localData) ? localData : [];
   },
 
@@ -562,6 +568,12 @@ export const api = {
           .eq('organization_id', org.id)
           .eq('alert_id', alertId);
       }
+    } catch (_) {}
+
+    try {
+      const cached = JSON.parse(localStorage.getItem('ibvap_saved_alerts') || '[]');
+      const updated = cached.map(a => (a.alert_id === alertId ? { ...a, status: 'ACKNOWLEDGED' } : a));
+      localStorage.setItem('ibvap_saved_alerts', JSON.stringify(updated));
     } catch (_) {}
 
     return authFetch(`${getApiBase()}/alerts/${alertId}/acknowledge`, {
@@ -605,6 +617,12 @@ export const api = {
         const { data, error } = await query;
         if (!error && Array.isArray(data) && data.length > 0) return data;
       }
+    } catch (_) {}
+
+    // 3. Fallback to LocalStorage
+    try {
+      const cached = JSON.parse(localStorage.getItem('ibvap_saved_events') || '[]');
+      if (Array.isArray(cached) && cached.length > 0) return cached;
     } catch (_) {}
 
     return Array.isArray(localData) ? localData : [];
@@ -657,44 +675,93 @@ export const api = {
     return api.getStats();
   },
 
-  // Persist live alert & event directly into current organization's database
+  // Persist live alert & event directly into SQLite backend, LocalStorage, and Supabase
   createAlert: async (alert) => {
-    const { org } = await getAuthUserAndOrg();
-    if (!org?.id) return;
-
-    const alertId = alert.alert_id || `ALT-${Math.floor(1000 + Math.random() * 9000)}`;
+    if (!alert) return null;
+    const alertId = alert.alert_id || alert.id || `ALT-${Math.floor(1000 + Math.random() * 9000)}`;
     const eventId = `EVT-${Math.floor(1000 + Math.random() * 9000)}`;
     const nowIso = alert.timestamp || new Date().toISOString();
 
-    await Promise.all([
-      supabase.from('alerts').insert([{
-        organization_id: org.id,
-        alert_id: alertId,
-        event_type: alert.event_type || 'INTRUSION',
-        severity: alert.severity || 'HIGH',
-        camera_id: alert.camera_id || 'CAM-01',
-        zone_id: alert.zone_id || null,
-        zone_name: alert.zone_name || 'Restricted Zone',
-        object_type: alert.object_type || 'person',
-        track_id: alert.track_id || null,
-        confidence: alert.confidence || 0.88,
-        description: alert.description || 'Intrusion alert detected',
-        snapshot_path: alert.snapshot_path || null,
-        timestamp: nowIso,
-        status: 'NEW'
-      }]),
-      supabase.from('events').insert([{
-        organization_id: org.id,
-        event_id: eventId,
-        camera_id: alert.camera_id || 'CAM-01',
-        timestamp: nowIso,
-        event_type: alert.event_type || 'ZONE_INTRUSION',
-        object_type: alert.object_type || 'person',
-        track_id: alert.track_id || null,
-        confidence: alert.confidence || 0.88,
-        zone_name: alert.zone_name || 'Restricted Zone',
-        snapshot_path: alert.snapshot_path || null
-      }])
-    ]);
+    const payload = {
+      alert_id: alertId,
+      id: alertId,
+      event_type: alert.event_type || alert.rule_type || 'RESTRICTED_ZONE_INTRUSION',
+      rule_type: alert.rule_type || alert.event_type || 'RESTRICTED_ZONE',
+      severity: alert.severity || 'CRITICAL',
+      camera_id: alert.camera_id || 'CAM-01',
+      zone_id: alert.zone_id || null,
+      zone_name: alert.zone_name || 'Restricted Sector Alpha',
+      object_type: alert.object_type || 'person',
+      track_id: alert.track_id || 1,
+      confidence: typeof alert.confidence === 'number' ? alert.confidence : 0.95,
+      description: alert.description || 'Intrusion violation detected in monitored sector',
+      snapshot_path: alert.snapshot_path || null,
+      status: alert.status || 'NEW',
+      timestamp: nowIso
+    };
+
+    // 1. Guaranteed storage in LocalStorage
+    try {
+      const stored = JSON.parse(localStorage.getItem('ibvap_saved_alerts') || '[]');
+      if (!stored.some(a => (a.alert_id || a.id) === alertId)) {
+        stored.unshift(payload);
+        localStorage.setItem('ibvap_saved_alerts', JSON.stringify(stored.slice(0, 50)));
+      }
+    } catch (_) {}
+
+    // 2. Persist to Backend SQLite Database
+    try {
+      await authFetch(`${getApiBase()}/alerts/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }, null);
+    } catch (e) {
+      console.warn('[IBVAP] Backend alert save warning:', e);
+    }
+
+    // 3. Persist Event to Backend
+    try {
+      await authFetch(`${getApiBase()}/events/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event_id: eventId,
+          camera_id: payload.camera_id,
+          timestamp: nowIso,
+          event_type: payload.event_type,
+          object_type: payload.object_type,
+          track_id: payload.track_id,
+          confidence: payload.confidence,
+          zone_name: payload.zone_name,
+          snapshot_path: payload.snapshot_path
+        })
+      }, null);
+    } catch (_) {}
+
+    // 4. Also background sync to Supabase (if configured)
+    (async () => {
+      try {
+        const { org } = await getAuthUserAndOrg();
+        const orgId = org?.id || 'default-org';
+        await Promise.all([
+          supabase.from('alerts').insert([{ ...payload, organization_id: orgId }]),
+          supabase.from('events').insert([{
+            organization_id: orgId,
+            event_id: eventId,
+            camera_id: payload.camera_id,
+            timestamp: nowIso,
+            event_type: payload.event_type,
+            object_type: payload.object_type,
+            track_id: payload.track_id,
+            confidence: payload.confidence,
+            zone_name: payload.zone_name,
+            snapshot_path: payload.snapshot_path
+          }])
+        ]);
+      } catch (_) {}
+    })();
+
+    return payload;
   }
 };

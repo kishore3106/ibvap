@@ -246,6 +246,9 @@ export default function App() {
       critical_alerts: (prev.critical_alerts || 0) + 1,
       events_today: (prev.events_today || 0) + 1
     }));
+
+    // Persist alert directly to SQLite backend, LocalStorage, and Supabase
+    api.createAlert(formattedAlert).catch(e => console.warn('Failed saving alert:', e));
   };
 
   const handleStatsUpdate = (stats) => {
