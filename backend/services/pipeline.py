@@ -555,23 +555,15 @@ class AnalyticsPipeline:
             direction = trk.get("direction", "")
             is_violating = track_id in violating_track_ids
 
-            # Tactical color coding: Bright RED when violating / trespassing, GREEN for normal person, AMBER for vehicle
-            if is_violating:
-                box_color = (0, 0, 255)
-                box_thickness = 3
-            else:
-                box_color = (0, 255, 0) if cls_name == "person" else (255, 180, 0)
-                box_thickness = 2
+            # Tactical color coding: Green for person, amber for vehicle (from akash-das-37/IBVAP)
+            box_color = (0, 255, 0) if cls_name == "person" else (255, 180, 0)
+            box_thickness = 2
 
             # Bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, box_thickness)
 
             # Label banner
-            if is_violating:
-                z_name = active_intruder_names.get(track_id, "BREACH")
-                label = f"RESTRICTED BREACH! {cls_name.upper()} #{track_id} ({conf:.2f})"
-            else:
-                label = f"{cls_name.upper()} #{track_id} ({conf:.2f})"
+            label = f"{cls_name.upper()} #{track_id} ({conf:.2f})"
             if dwell > 2.0:
                 label += f" | {dwell:.1f}s"
             if direction and direction != "STATIONARY":
@@ -583,9 +575,8 @@ class AnalyticsPipeline:
 
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
             cv2.rectangle(frame, (x1, max(0, y1 - th - 8)), (x1 + tw + 8, y1), box_color, -1)
-            text_color = (255, 255, 255) if is_violating else (0, 0, 0)
             cv2.putText(frame, label, (x1 + 4, max(th + 2, y1 - 4)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, text_color, 1, cv2.LINE_AA)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
 
             # Prominent Tactical ANPR License Plate Badge underneath vehicle
             if "plate_number" in trk:

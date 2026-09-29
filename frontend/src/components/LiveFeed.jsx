@@ -80,41 +80,25 @@ async function captureTacticalSnapshot({
       ctx.setLineDash([]);
     }
 
-    // 3. Draw Track Bounding Box and Labels
+    // 3. Draw Track Bounding Box and Labels (from akash-das-37/IBVAP)
     if (track) {
       const bx = track.x;
       const by = track.y;
       const bw = track.w;
       const bh = track.h;
 
-      ctx.strokeStyle = '#ef4444';
-      ctx.lineWidth = 2.5;
-      ctx.strokeRect(bx, by, bw, bh);
-
-      // Corner brackets
-      ctx.lineWidth = 3.5;
-      const bl = 14;
-      ctx.beginPath();
-      ctx.moveTo(bx, by + bl); ctx.lineTo(bx, by); ctx.lineTo(bx + bl, by);
-      ctx.moveTo(bx + bw - bl, by); ctx.lineTo(bx + bw, by); ctx.lineTo(bx + bw, by + bl);
-      ctx.moveTo(bx, by + bh - bl); ctx.lineTo(bx, by + bh); ctx.lineTo(bx + bl, by + bh);
-      ctx.moveTo(bx + bw - bl, by + bh); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx + bw, by + bh - bl);
-      ctx.stroke();
-
       if (mode === 'car' || track.isVehicle) {
-        // Top vehicle alert bar
-        ctx.fillStyle = '#ef4444';
-        ctx.fillRect(0, 0, width, 30);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 12px monospace';
-        ctx.fillText(alertTitle, 15, 20);
+        // Vehicle box (amber/cyan)
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(bx, by, bw, bh);
 
         // Vehicle bounding box header
-        ctx.fillStyle = '#ef4444';
-        ctx.fillRect(bx, by - 24, Math.max(300, bw + 10), 22);
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = '#00f0ff';
+        ctx.fillRect(bx, Math.max(0, by - 22), Math.max(260, bw + 10), 22);
+        ctx.fillStyle = '#000000';
         ctx.font = 'bold 11px monospace';
-        ctx.fillText(`RESTRICTED BREACH: CAR #10 [0.94] [LEFT] | WB-24-1024`, bx + 6, by - 9);
+        ctx.fillText(track.label || 'CAR #10 (0.94) | 12.4s [LEFT] | WB-24-1024', bx + 4, Math.max(15, by - 6));
 
         // ANPR badge below car
         ctx.fillStyle = '#0a0f19';
@@ -124,43 +108,42 @@ async function captureTacticalSnapshot({
         ctx.strokeRect(bx + 8, by + bh + 4, 130, 22);
         ctx.fillStyle = '#f59e0b';
         ctx.font = 'bold 11px monospace';
-        ctx.fillText(`ANPR: [WB-24-1024]`, bx + 14, by + bh + 19);
+        ctx.fillText('ANPR: [WB-24-1024]', bx + 14, by + bh + 19);
 
-        // Connector line to breach zone
-        ctx.beginPath();
-        ctx.moveTo(bx, by + bh / 2);
-        ctx.lineTo(425, by + bh / 2);
-        ctx.strokeStyle = '#ef4444';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-        ctx.fillStyle = '#ef4444';
-        ctx.fillRect(240, by + bh / 2 - 10, 175, 20);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 9px monospace';
-        ctx.fillText('BREACH: CUSTOM BORDER SECTOR 2', 245, by + bh / 2 + 4);
-      } else {
-        // Person top banner across top
+        // Top alert banner
         ctx.fillStyle = '#ef4444';
         ctx.fillRect(0, 0, width, 32);
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 13px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('RESTRICTED BREACH: Target inside restricted perimeter zone', width / 2, 21);
-        ctx.textAlign = 'left';
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText(alertTitle, 15, 21);
+      } else {
+        // Person - Clean Green Box from akash-das-37/IBVAP
+        ctx.strokeStyle = '#00ff00';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(bx, by, bw, bh);
 
-        // Connector line
+        // Solid green label banner
+        const bannerW = Math.max(180, bw + 10);
+        ctx.fillStyle = '#00ff00';
+        ctx.fillRect(bx, Math.max(0, by - 20), bannerW, 20);
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(track.label || 'PERSON #23 (0.89) | 27.2s [LEFT]', bx + 4, Math.max(14, by - 5));
+
+        // Yellow trajectory center line
         ctx.beginPath();
-        ctx.moveTo(bx, by + bh / 2);
-        ctx.lineTo(115, by + bh / 2);
-        ctx.strokeStyle = '#ef4444';
+        ctx.moveTo(bx + 6, by + bh * 0.48);
+        ctx.lineTo(bx + bw - 6, by + bh * 0.48);
+        ctx.strokeStyle = '#ffe600';
         ctx.lineWidth = 2;
         ctx.stroke();
 
+        // Top violation banner
         ctx.fillStyle = '#ef4444';
-        ctx.fillRect(80, by + bh / 2 - 10, 160, 20);
+        ctx.fillRect(0, 0, width, 32);
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 9px monospace';
-        ctx.fillText('BREACH: CUSTOM BORDER SECTOR 2', 85, by + bh / 2 + 4);
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText(alertTitle, 15, 21);
       }
     }
 
@@ -218,6 +201,7 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
   const lastAlertTimeRef = useRef(0);
   const carAlertTimerRef = useRef(0);
   const webcamAlertTimerRef = useRef(0);
+  const webcamStartRef = useRef(Date.now());
 
   // Smooth position tracking ref for webcam user (defaults to center/right of camera)
   const personCenterRef = useRef({ x: 380, y: 240 });
@@ -277,14 +261,14 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
       let pCount = 0;
       let vCount = 0;
 
-      // 1. Person: active from frame 50 to 360 (2s to 14.4s)
-      if (frameIdx >= 50 && frameIdx < 360) {
+      // 1. Person: active from frame 50 to 450 (2s to 18s) - EXACT match to generate_demo_video.py
+      if (frameIdx >= 50 && frameIdx < 450) {
         pCount = 1;
-        let px = 50;
-        if (frameIdx < 250) {
+        let px;
+        if (frameIdx < 260) {
           px = 50 + (frameIdx - 50) * 1.6;
         } else {
-          px = 370 + 4 * Math.sin(frameIdx * 0.1);
+          px = 386 + 5 * Math.sin(frameIdx * 0.1);
         }
 
         const bx = Math.round(px - 18);
@@ -294,20 +278,38 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
 
         // Breach check: enters Custom Border Sector 2 when px >= 370
         const isBreached = px >= 370;
-        const statusLabel = isBreached ? 'ZONE INTRUSION DETECTED' : 'TRACKED';
 
+        const dwellSec = Math.max(0, (frameIdx - 50) / 25).toFixed(1);
+        const dir = frameIdx < 260 ? 'RIGHT' : (Math.sin(frameIdx * 0.1) > 0 ? 'RIGHT' : 'LEFT');
+        let pLabel = 'PERSON #1 (0.95)';
+        if (frameIdx >= 100) {
+          pLabel += ` | ${dwellSec}s`;
+        }
+        if (dir) {
+          pLabel += ` [${dir}]`;
+        }
+
+        // Trajectory path for person
+        const trajPoints = [];
+        for (let k = 4; k >= 0; k--) {
+          const pastF = Math.max(50, frameIdx - k * 6);
+          const pastPx = pastF < 260 ? 50 + (pastF - 50) * 1.6 : 386 + 5 * Math.sin(pastF * 0.1);
+          trajPoints.push(`${Math.round(pastPx)},312`);
+        }
+
+        // Pure green box for person (from akash-das-37/IBVAP)
         const pTrack = {
           id: 1,
-          label: isBreached ? 'RESTRICTED BREACH: PERSON #1 (0.95)' : 'PERSON #1',
+          label: pLabel,
           confidence: '95%',
           x: bx,
           y: by,
           w: bw,
           h: bh,
-          color: isBreached ? '#ef4444' : '#10b981',
+          color: '#00ff00',
           isBreach: isBreached,
           isVehicle: false,
-          statusLabel
+          trajectory: trajPoints.join(' ')
         };
         tracks.push(pTrack);
 
@@ -322,7 +324,7 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
             width: 960,
             height: 540,
             mode: 'demo',
-            alertTitle: 'RESTRICTED BREACH: Target inside restricted perimeter zone'
+            alertTitle: 'ALERT: Critical Intrusion in Custom Border Sector 2 — Person #1 inside restricted sector'
           }).then((snapUrl) => {
             if (onNewAlert) {
               onNewAlert({
@@ -355,21 +357,27 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
         if (vx > -180 && vx < 980) {
           // Breach check: car enters restricted border sector when vx <= 430
           const isBreached = vx <= 430;
-          const statusLabel = isBreached ? 'ZONE INTRUSION DETECTED' : 'ANPR VERIFIED';
+
+          const carDwell = ((frameIdx - 400) / 25).toFixed(1);
+          let cLabel = 'CAR #10 (0.94)';
+          if (frameIdx >= 450) {
+            cLabel += ` | ${carDwell}s`;
+          }
+          cLabel += ' [LEFT] | WB-24-1024';
 
           const carTrack = {
             id: 10,
-            label: isBreached ? 'RESTRICTED BREACH: CAR #10 [0.94] [LEFT] | WB-24-1024' : 'CAR #10 (0.94) [LEFT] | WB-24-1024',
+            label: cLabel,
             confidence: '94%',
             plate_number: 'WB-24-1024',
             x: Math.round(vx),
             y: Math.round(vy),
             w: vw,
             h: vh,
-            color: isBreached ? '#ef4444' : '#00f0ff',
+            color: '#00f0ff',
             isBreach: isBreached,
             isVehicle: true,
-            statusLabel
+            trajectory: `${Math.min(960, Math.round(vx + 160))},380 ${Math.round(vx + 80)},380`
           };
           tracks.push(carTrack);
 
@@ -475,6 +483,7 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
       setIsWebcamActive(true);
       setStreamError(false);
       setHasLoaded(true);
+      webcamStartRef.current = Date.now();
 
       // Notify backend in background to expect browser webcam
       api.switchCameraSource(currentCamera?.camera_id || 'CAM-01', '0').catch(() => {});
@@ -565,15 +574,22 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
         const bx = isBreached ? 70 : Math.max(160, Math.min(370, Math.round(currentX - bw / 2)));
         const breachedZoneName = 'Custom Border Sector 2';
 
+        const elapsedSec = ((Date.now() - (webcamStartRef.current || Date.now())) / 1000).toFixed(1);
+        const dwellStr = parseFloat(elapsedSec) > 2.0 ? ` | ${elapsedSec}s` : '';
+        const pLabel = `PERSON #23 (0.89)${dwellStr} [LEFT]`;
+
+        // Pure green box for person (from akash-das-37/IBVAP)
         const trackObj = {
-          id: 'CAM-01-P23',
-          label: isBreached ? 'RESTRICTED BREACH: Target inside restricted perimeter zone' : 'PERSON #23 (0.89) | 27.2s [LEFT]',
+          id: 23,
+          label: pLabel,
           confidence: '89%',
+          dwell: elapsedSec,
+          direction: 'LEFT',
           x: bx,
           y: by,
           w: bw,
           h: bh,
-          color: isBreached ? '#ef4444' : '#10b981',
+          color: '#00ff00',
           isBreach: isBreached,
           statusLabel: isBreached ? 'ZONE INTRUSION DETECTED' : 'TRACKED'
         };
@@ -601,7 +617,7 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
             width: 640,
             height: 480,
             mode: 'webcam',
-            alertTitle: 'RESTRICTED BREACH: Target inside restricted perimeter zone'
+            alertTitle: 'ALERT: Unauthorized Person #23 entered Custom Border Sector 2'
           }).then((snapUrl) => {
             if (onNewAlert) {
               onNewAlert({
@@ -814,27 +830,27 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
                 </text>
               </g>
 
-              {/* 2. Real-time AI Person Tracking Bounding Box on Webcam */}
+              {/* 2. Real-time AI Person Tracking Bounding Box on Webcam (from akash-das-37/IBVAP) */}
               {webcamTracks.map((tr) => (
                 <g key={tr.id}>
                   {/* Top Breach Banner across feed if breached */}
                   {tr.isBreach && (
                     <g>
-                      <rect x="0" y="0" width="640" height="30" fill="#ef4444" />
+                      <rect x="0" y="0" width="640" height="32" fill="#ef4444" />
                       <text
                         x="320"
-                        y="20"
+                        y="21"
                         textAnchor="middle"
                         fill="#ffffff"
                         fontSize="12"
                         fontFamily="monospace"
                         fontWeight="bold"
-                        letterSpacing="1"
+                        letterSpacing="0.5"
                       >
-                        RESTRICTED BREACH: Target inside restricted perimeter zone
+                        ALERT: Unauthorized Person #23 entered Custom Border Sector 2
                       </text>
                       {/* Horizontal red connector line to zone */}
-                      <line x1="115" y1={tr.y + tr.h * 0.5} x2={tr.x} y2={tr.y + tr.h * 0.5} stroke="#ef4444" strokeWidth="2.5" />
+                      <line x1="115" y1={tr.y + tr.h * 0.5} x2={tr.x} y2={tr.y + tr.h * 0.5} stroke="#ef4444" strokeWidth="2" strokeDasharray="4 2" />
                       <rect x="85" y={tr.y + tr.h * 0.5 - 10} width="165" height="20" fill="#ef4444" rx="2" />
                       <text x="90" y={tr.y + tr.h * 0.5 + 4} fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
                         BREACH: CUSTOM BORDER SECTOR 2
@@ -842,51 +858,40 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
                     </g>
                   )}
 
-                  {/* Bounding Box */}
+                  {/* Clean Green Bounding Box (from akash-das-37/IBVAP) */}
                   <rect
                     x={tr.x}
                     y={tr.y}
                     width={tr.w}
                     height={tr.h}
-                    fill={tr.isBreach ? 'rgba(239, 68, 68, 0.28)' : 'rgba(16, 185, 129, 0.08)'}
-                    stroke={tr.color}
-                    strokeWidth={tr.isBreach ? '3' : '2.5'}
+                    fill="none"
+                    stroke="#00ff00"
+                    strokeWidth="2"
                   />
 
-                  {/* Tactical Corner Brackets */}
-                  <path d={`M ${tr.x} ${tr.y + 14} L ${tr.x} ${tr.y} L ${tr.x + 14} ${tr.y}`} stroke={tr.color} strokeWidth="3.5" fill="none" />
-                  <path d={`M ${tr.x + tr.w - 14} ${tr.y} L ${tr.x + tr.w} ${tr.y} L ${tr.x + tr.w} ${tr.y + 14}`} stroke={tr.color} strokeWidth="3.5" fill="none" />
-                  <path d={`M ${tr.x} ${tr.y + tr.h - 14} L ${tr.x} ${tr.y + tr.h} L ${tr.x + 14} ${tr.y + tr.h}`} stroke={tr.color} strokeWidth="3.5" fill="none" />
-                  <path d={`M ${tr.x + tr.w - 14} ${tr.y + tr.h} L ${tr.x + tr.w} ${tr.y + tr.h} L ${tr.x + tr.w} ${tr.y + tr.h - 14}`} stroke={tr.color} strokeWidth="3.5" fill="none" />
+                  {/* Centered Yellow Torso Line */}
+                  <line
+                    x1={tr.x + tr.w * 0.15}
+                    y1={tr.y + tr.h * 0.48}
+                    x2={tr.x + tr.w * 0.85}
+                    y2={tr.y + tr.h * 0.48}
+                    stroke="#ffe600"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
 
-                  {/* Centered Yellow Torso Line when tracked safely outside zone */}
-                  {!tr.isBreach && (
-                    <line
-                      x1={tr.x + tr.w * 0.2}
-                      y1={tr.y + tr.h * 0.46}
-                      x2={tr.x + tr.w * 0.8}
-                      y2={tr.y + tr.h * 0.46}
-                      stroke="#eab308"
-                      strokeWidth="3.5"
-                      strokeLinecap="round"
-                    />
-                  )}
-
-                  {/* Tactical Label Header */}
+                  {/* Solid Green Label Banner Header (from akash-das-37/IBVAP) */}
                   <rect
                     x={tr.x}
-                    y={Math.max(10, tr.y - 24)}
+                    y={Math.max(0, tr.y - 18)}
                     width={Math.max(190, tr.w * 0.85)}
-                    height="22"
-                    fill={tr.isBreach ? '#ef4444' : '#0a0f19'}
-                    stroke={tr.color}
-                    strokeWidth="1.5"
-                    rx="3"
+                    height="18"
+                    fill="#00ff00"
                   />
                   <text
-                    x={tr.x + 6}
-                    y={Math.max(25, tr.y - 9)}
-                    fill={tr.isBreach ? '#ffffff' : tr.color}
+                    x={tr.x + 4}
+                    y={Math.max(13, tr.y - 5)}
+                    fill="#000000"
                     fontSize="11"
                     fontFamily="monospace"
                     fontWeight="bold"
@@ -960,103 +965,117 @@ export default function LiveFeed({ liveStats, currentCamera, zones = [], onSourc
               {/* 2. Real-time AI Tracking Bounding Boxes (Person & Vehicle with ANPR) */}
               {demoTracks.map((tr) => (
                 <g key={tr.id}>
-                  {/* Bounding box rectangle */}
+                  {/* Top Breach Banner across demo feed if breached */}
+                  {tr.isBreach && (
+                    <g>
+                      <rect x="0" y="0" width="960" height="35" fill="#ef4444" />
+                      <text
+                        x="480"
+                        y="24"
+                        textAnchor="middle"
+                        fill="#ffffff"
+                        fontSize="13"
+                        fontFamily="monospace"
+                        fontWeight="bold"
+                        letterSpacing="0.5"
+                      >
+                        {tr.isVehicle
+                          ? 'ALERT: Unauthorized Car #10 [Plate: WB-24-1024] entered Custom Border Sector 2'
+                          : 'ALERT: Critical Intrusion in Custom Border Sector 2 — Person #1 inside restricted sector'}
+                      </text>
+                      {/* Connector line to zone */}
+                      <line
+                        x1={tr.isVehicle ? '425' : '370'}
+                        y1={tr.y + tr.h * 0.5}
+                        x2={tr.x}
+                        y2={tr.y + tr.h * 0.5}
+                        stroke="#ef4444"
+                        strokeWidth="2.5"
+                        strokeDasharray="4 2"
+                      />
+                      <rect
+                        x={tr.isVehicle ? 235 : 250}
+                        y={tr.y + tr.h * 0.5 - 10}
+                        width="175"
+                        height="20"
+                        fill="#ef4444"
+                        rx="2"
+                      />
+                      <text
+                        x={tr.isVehicle ? 240 : 255}
+                        y={tr.y + tr.h * 0.5 + 4}
+                        fill="#ffffff"
+                        fontSize="9"
+                        fontFamily="monospace"
+                        fontWeight="bold"
+                      >
+                        BREACH: CUSTOM BORDER SECTOR 2
+                      </text>
+                    </g>
+                  )}
+
+                  {/* Clean Bounding Box (Green for person from akash-das-37/IBVAP) */}
                   <rect
                     x={tr.x}
                     y={tr.y}
                     width={tr.w}
                     height={tr.h}
-                    fill={tr.isBreach ? 'rgba(239, 68, 68, 0.28)' : (tr.isVehicle ? 'rgba(0, 240, 255, 0.12)' : 'rgba(16, 185, 129, 0.12)')}
-                    stroke={tr.color}
-                    strokeWidth="2.5"
+                    fill="none"
+                    stroke={tr.isVehicle ? '#00f0ff' : '#00ff00'}
+                    strokeWidth="2"
                   />
 
-                  {/* Tactical Corner Brackets */}
-                  <path d={`M ${tr.x} ${tr.y + 14} L ${tr.x} ${tr.y} L ${tr.x + 14} ${tr.y}`} stroke={tr.color} strokeWidth="3" fill="none" />
-                  <path d={`M ${tr.x + tr.w - 14} ${tr.y} L ${tr.x + tr.w} ${tr.y} L ${tr.x + tr.w} ${tr.y + 14}`} stroke={tr.color} strokeWidth="3" fill="none" />
-                  <path d={`M ${tr.x} ${tr.y + tr.h - 14} L ${tr.x} ${tr.y + tr.h} L ${tr.x + 14} ${tr.y + tr.h}`} stroke={tr.color} strokeWidth="3" fill="none" />
-                  <path d={`M ${tr.x + tr.w - 14} ${tr.y + tr.h} L ${tr.x + tr.w} ${tr.y + tr.h} L ${tr.x + tr.w} ${tr.y + tr.h - 14}`} stroke={tr.color} strokeWidth="3" fill="none" />
+                  {/* Yellow Trajectory Path */}
+                  {tr.trajectory && (
+                    <polyline
+                      points={tr.trajectory}
+                      fill="none"
+                      stroke="#ffe600"
+                      strokeWidth="2"
+                    />
+                  )}
 
-                  {/* Vehicle Specific Overlay: ANPR License Plate Badge & Breach Indicator */}
-                  {tr.isVehicle ? (
+                  {/* Solid Label Banner Header atop Bounding Box */}
+                  <rect
+                    x={tr.x}
+                    y={Math.max(0, tr.y - 18)}
+                    width={tr.isVehicle ? Math.max(260, tr.w + 10) : Math.max(165, tr.w + 10)}
+                    height="18"
+                    fill={tr.isVehicle ? '#00f0ff' : '#00ff00'}
+                  />
+                  <text
+                    x={tr.x + 4}
+                    y={Math.max(13, tr.y - 5)}
+                    fill="#000000"
+                    fontSize="10"
+                    fontFamily="monospace"
+                    fontWeight="bold"
+                  >
+                    {tr.label}
+                  </text>
+
+                  {/* Tactical ANPR Plate Badge for Vehicle */}
+                  {tr.isVehicle && (
                     <g>
-                      {/* Bounding Box Header */}
-                      <rect
-                        x={tr.x}
-                        y={Math.max(10, tr.y - 24)}
-                        width={Math.max(260, tr.w + 10)}
-                        height="22"
-                        fill={tr.isBreach ? '#ef4444' : '#0a0f19'}
-                        stroke={tr.color}
-                        strokeWidth="1.5"
-                        rx="3"
-                      />
-                      <text
-                        x={tr.x + 6}
-                        y={Math.max(25, tr.y - 9)}
-                        fill={tr.isBreach ? '#ffffff' : tr.color}
-                        fontSize="11"
-                        fontFamily="monospace"
-                        fontWeight="bold"
-                      >
-                        {tr.label}
-                      </text>
-
-                      {/* Tactical ANPR Plate Badge */}
                       <rect
                         x={tr.x + 8}
                         y={tr.y + tr.h + 4}
                         width="135"
-                        height="22"
+                        height="20"
                         fill="#0a0f19"
-                        stroke={tr.isBreach ? '#ef4444' : '#00f0ff'}
+                        stroke="#00f0ff"
                         strokeWidth="1.5"
                         rx="3"
                       />
                       <text
                         x={tr.x + 14}
-                        y={tr.y + tr.h + 19}
+                        y={tr.y + tr.h + 18}
                         fill="#f59e0b"
                         fontSize="11"
                         fontFamily="monospace"
                         fontWeight="bold"
                       >
                         ANPR: [WB-24-1024]
-                      </text>
-
-                      {/* Breach Connector line to Custom Border Sector 2 */}
-                      {tr.isBreach && (
-                        <g>
-                          <line x1={tr.x} y1={tr.y + tr.h * 0.5} x2="425" y2={tr.y + tr.h * 0.5} stroke="#ef4444" strokeWidth="2.5" />
-                          <rect x="235" y={tr.y + tr.h * 0.5 - 10} width="175" height="20" fill="#ef4444" rx="2" />
-                          <text x="240" y={tr.y + tr.h * 0.5 + 4} fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="bold">
-                            BREACH: CUSTOM BORDER SECTOR 2
-                          </text>
-                        </g>
-                      )}
-                    </g>
-                  ) : (
-                    // Person Header
-                    <g>
-                      <rect
-                        x={tr.x}
-                        y={Math.max(10, tr.y - 24)}
-                        width={Math.max(160, tr.w + 10)}
-                        height="22"
-                        fill={tr.isBreach ? '#ef4444' : '#0f172a'}
-                        stroke={tr.color}
-                        strokeWidth="1.5"
-                        rx="3"
-                      />
-                      <text
-                        x={tr.x + 6}
-                        y={Math.max(25, tr.y - 9)}
-                        fill={tr.isBreach ? '#ffffff' : tr.color}
-                        fontSize="11"
-                        fontFamily="monospace"
-                        fontWeight="bold"
-                      >
-                        {tr.label} {tr.confidence} • {tr.statusLabel}
                       </text>
                     </g>
                   )}
